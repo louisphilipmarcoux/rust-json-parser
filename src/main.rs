@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq)]
 pub enum JsonValue {
     Null,
+    Boolean(bool),
 }
 
 fn parse_null(input: &str) -> Result<(JsonValue, &str), &'static str> {
@@ -11,42 +12,60 @@ fn parse_null(input: &str) -> Result<(JsonValue, &str), &'static str> {
     }
 }
 
+fn parse_boolean(input: &str) -> Result<(JsonValue, &str), &'static str> {
+    if input.starts_with("true") {
+        Ok((JsonValue::Boolean(true), &input[4..]))
+    } else if input.starts_with("false") {
+        Ok((JsonValue::Boolean(false), &input[5..]))
+    } else {
+        Err("Expected 'true' or 'false'")
+    }
+}
+
+fn parse_value(input: &str) -> Result<(JsonValue, &str), &'static str> {
+    match input.chars().next() {
+        Some('n') => parse_null(input),
+        Some('t') | Some('f') => parse_boolean(input),
+        _ => Err("Unexpected 'null', 'true', or 'false'"),
+    }
+}
+
 fn main() {
-    // --- Test 1: Valid 'null' --- 
-    let input = "null";
+    println!("--- Stage 1 Tests ---");
+    run_test("null", true);
+    run_test("nul", false);
+    run_test("null, \"more stuff\"", true);
+
+    println!("\n--- Stage 2 Tests ---");
+    run_test("true", true);
+    run_test("false", true);
+    run_test("True", false); // Invalid case
+    run_test("fals", false); // Invalid partial
+    run_test("false true", true); // Valid, with remaining text
+    run_test("\"true\"", false); // Invalid, is a string
+}
+
+fn run_test(input: &str, should_pass: bool) {
     println!("Parsing: '{}'", input);
-    match parse_null(input) {
+    
+    // We now call our main 'parse_value' function
+    match parse_value(input) {
         Ok((value, rest)) => {
-            println!("   -> Parsed: {:?}", value);
-            println!("   -> Remaining: '{}'", rest);
+            if should_pass {
+                println!("   -> Parsed: {:?}", value);
+                println!("   -> Remaining: '{}'", rest);
+            } else {
+                // This shouldn't happen if should_pass is false
+                println!("   -> !!ERROR!!: Unexpectedly parsed {:?} from '{}'", value, input);
+            }
         }
-        Err(e) => println!("   -> Error: {}", e),
-    }
-
-    // --- Test 2: Invalid 'nul' --- 
-    let invalid_input = "nul";
-    println!("\nParsing: '{}'", invalid_input);
-    match parse_null(invalid_input) {
-        Ok((value, _)) => println!("   -> Error: Incorrectly parsed {:?}", value),
-        Err(e) => println!("   -> Correctly failed with: {}", e),
-    }
-
-    // --- Test 3: Invalid 'NULL' --- 
-    let invalid_input_case = "NULL";
-    println!("\nParsing: '{}'", invalid_input_case);
-    match parse_null(invalid_input_case) {
-        Ok((value, _)) => println!("   -> Error: Incorrectly parsed {:?}", value),
-        Err(e) => println!("   -> Correctly failed with: {}", e),
-    }
-
-    // --- Test 4: Valid 'null' with extra data (for later stages) ---
-    let input_with_extra = "null, \"more stuff\"";
-    println!("\nParsing: '{}'", input_with_extra);
-    match parse_null(input_with_extra) {
-        Ok((value, rest)) => {
-            println!("   -> Parsed: {:?}", value);
-            println!("   -> Remaining: '{}'", rest);
+        Err(e) => {
+            if should_pass {
+                // This shouldn't happen if should_pass is true
+                println!("   -> !!ERROR!!: Unexpectedly failed with '{}' for '{}'", e, input);
+            } else {
+                println!("   -> Correctly failed with: {}", e);
+            }
         }
-        Err(e) => println!("   -> Error: {}", e),
     }
 }
