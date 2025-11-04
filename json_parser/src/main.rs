@@ -39,10 +39,38 @@ fn parse_number(input: &str) -> Result<(JsonValue, &str), &'static str> {
     let end_index = input
         .find(|c: char| c.is_whitespace() || c == ',' || c == ']' || c == '}')
         .unwrap_or(input.len());
+
     let num_str = &input[..end_index];
+
+    // --- NEW VALIDATION for Stage 10 ---
+    if num_str.is_empty() {
+        return Err("Invalid number format: empty string");
+    }
+
+    // Fail cases like "1.e1" or "1.E1"
+    if let Some(e_pos) = num_str.find(['e', 'E']) {
+        if e_pos > 0 {
+            // Check the character right before the 'e' or 'E'
+            if let Some(char_before_e) = num_str.chars().nth(e_pos - 1) {
+                if char_before_e == '.' {
+                    return Err("Invalid number format: decimal point must be followed by digits");
+                }
+            }
+        }
+    }
+
+    // Fail cases like "1e", "1e+", "1e-" [cite: 174]
+    if let Some(last_char) = num_str.chars().last() {
+        if last_char == 'e' || last_char == 'E' || last_char == '+' || last_char == '-' {
+            return Err("Invalid number format: incomplete exponent");
+        }
+    }
+    // --- END NEW VALIDATION ---
+
+    // Now, try to parse the (mostly) validated string
     match num_str.parse::<f64>() {
         Ok(num) => Ok((JsonValue::Number(num), &input[end_index..])),
-        Err(_) => Err("Invalid number format"),
+        Err(_) => Err("Invalid number format"), // Catches other errors like "--1" [cite: 58]
     }
 }
 
@@ -70,7 +98,7 @@ fn parse_string(input: &str) -> Result<(JsonValue, &str), &'static str> {
                             // --- NEW Surrogate-Aware Logic ---
 
                             // Helper closure to parse 4 hex digits from the main iterator
-                            let mut parse_hex_4 = |chars: &mut std::iter::Enumerate<std::str::Chars<'_>>| -> Result<u32, &'static str> {
+                            let parse_hex_4 = |chars: &mut std::iter::Enumerate<std::str::Chars<'_>>| -> Result<u32, &'static str> {
                                 let mut hex_code = String::with_capacity(4);
                                 for _ in 0..4 {
                                     if let Some((_, hex_char)) = chars.next() {
@@ -384,5 +412,37 @@ mod tests {
         let (value, rest) = parse_value("1 23").unwrap();
         assert_eq!(value, JsonValue::Number(1.0));
         assert_eq!(rest, "23");
+    }
+
+    // --- NEW TESTS for Stage 10 ---
+    #[test]
+    fn test_parse_numbers_advanced() {
+        // Valid: Scientific notation (lowercase 'e')
+        let (value, _) = parse_value("1.23e4").unwrap();
+        assert_eq!(value, JsonValue::Number(12300.0));
+
+        // Valid: Scientific notation (uppercase 'E')
+        let (value, _) = parse_value("1.23E4").unwrap();
+        assert_eq!(value, JsonValue::Number(12300.0));
+
+        // Valid: Negative exponent
+        let (value, _) = parse_value("-5.0E-2").unwrap();
+        assert_eq!(value, JsonValue::Number(-0.05));
+
+        // Valid: Exponent with positive sign
+        let (value, _) = parse_value("1e+3").unwrap();
+        assert_eq!(value, JsonValue::Number(1000.0));
+
+        // Valid: Integer with exponent
+        let (value, _) = parse_value("1e3").unwrap();
+        assert_eq!(value, JsonValue::Number(1000.0));
+
+        // Invalid: Incomplete exponent
+        assert!(parse_value("1e").is_err());
+        assert!(parse_value("1e-").is_err());
+        assert!(parse_value("1e+").is_err());
+
+        // Invalid: Invalid format
+        assert!(parse_value("1.e1").is_err());
     }
 }
