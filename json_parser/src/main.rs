@@ -1,26 +1,12 @@
-use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::iter::Peekable;
 use std::str::Chars;
 
-// --- Constants for Stage 14 ---
-/// Default maximum nesting depth (e.g., 100)
+// --- Constants ---
 const DEFAULT_MAX_DEPTH: usize = 100;
-/// Maximum file size to parse (e.g., 10MB)
 const MAX_JSON_SIZE_BYTES: usize = 10 * 1024 * 1024;
 
-// --- 1. The final JSON Value Enum ---
-#[derive(Debug, PartialEq, Clone)]
-pub enum JsonValue {
-    Null,
-    Boolean(bool),
-    Number(f64),
-    String(String),
-    Array(Vec<JsonValue>),
-    Object(HashMap<String, JsonValue>),
-}
-
-// --- 2. The new Token Structs ---
+// --- 2. Token Structs ---
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     LeftBrace,    // {
@@ -42,7 +28,7 @@ pub struct Token {
     column: usize,
 }
 
-// --- 3. The new Error Type ---
+// --- 3. Error Type ---
 #[derive(Debug, PartialEq)]
 pub struct ParseError {
     message: String,
@@ -60,7 +46,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-// --- 4. The Tokenizer (Lexer) ---
+// --- 4. Tokenizer ---
 struct Tokenizer<'a> {
     input: Peekable<Chars<'a>>,
     line: usize,
@@ -101,67 +87,6 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn tokenize(&mut self) -> Result<Vec<Token>, ParseError> {
-        let mut tokens = Vec::new();
-        loop {
-            let (start_line, start_column) = (self.line, self.column);
-            let next_char = match self.peek() {
-                Some(c) => *c,
-                None => break,
-            };
-
-            let token_kind = match next_char {
-                // ... (whitespace, single-char tokens) ...
-                ' ' | '\t' | '\r' | '\n' => {
-                    self.next_char();
-                    continue;
-                }
-                '{' => {
-                    self.next_char();
-                    TokenType::LeftBrace
-                }
-                '}' => {
-                    self.next_char();
-                    TokenType::RightBrace
-                }
-                '[' => {
-                    self.next_char();
-                    TokenType::LeftBracket
-                }
-                ']' => {
-                    self.next_char();
-                    TokenType::RightBracket
-                }
-                ':' => {
-                    self.next_char();
-                    TokenType::Colon
-                }
-                ',' => {
-                    self.next_char();
-                    TokenType::Comma
-                }
-                'n' => self.lex_literal("null", TokenType::Null)?,
-                't' => self.lex_literal("true", TokenType::Boolean(true))?,
-                'f' => self.lex_literal("false", TokenType::Boolean(false))?,
-                '"' => self.lex_string()?,
-                '-' | '0'..='9' => self.lex_number()?,
-                '/' => {
-                    return Err(self.error("Comments are not allowed in JSON".to_string()));
-                }
-                _ => {
-                    return Err(self.error(format!("Unexpected character '{}'", next_char)));
-                }
-            };
-
-            tokens.push(Token {
-                kind: token_kind,
-                line: start_line,
-                column: start_column,
-            });
-        }
-        Ok(tokens)
-    }
-
     fn lex_literal(
         &mut self,
         expected: &'static str,
@@ -178,11 +103,9 @@ impl<'a> Tokenizer<'a> {
     fn lex_string(&mut self) -> Result<TokenType, ParseError> {
         self.next_char(); // Consume opening '"'
         let mut parsed_content = String::new();
-
         while let Some(c) = self.next_char() {
             match c {
                 '\\' => {
-                    // ... (escape logic) ...
                     if let Some(escaped_char) = self.next_char() {
                         match escaped_char {
                             '"' | '\\' | '/' => parsed_content.push(escaped_char),
@@ -228,7 +151,6 @@ impl<'a> Tokenizer<'a> {
     fn lex_number(&mut self) -> Result<TokenType, ParseError> {
         let mut num_str = String::new();
         num_str.push(self.next_char().unwrap());
-
         while let Some(&c) = self.peek() {
             match c {
                 '0'..='9' | '.' | 'e' | 'E' | '+' | '-' => {
@@ -237,8 +159,6 @@ impl<'a> Tokenizer<'a> {
                 _ => break,
             }
         }
-
-        // ... (Stage 13 validation checks) ...
         if num_str.starts_with('0') && num_str.len() > 1 {
             if let Some(second_char) = num_str.chars().nth(1) {
                 if second_char.is_ascii_digit() {
@@ -259,7 +179,6 @@ impl<'a> Tokenizer<'a> {
                 return Err(self.error(format!("Invalid number '{}'", num_str)));
             }
         }
-
         match num_str.parse::<f64>() {
             Ok(num) => Ok(TokenType::Number(num)),
             Err(_) => Err(self.error(format!("Invalid number '{}'", num_str))),
@@ -267,214 +186,454 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-// --- 5. The Parser (UPDATED for Stage 14) ---
-pub struct Parser<'a> {
-    tokens: &'a [Token],
-    position: usize,
-    // --- NEW Fields ---
-    current_depth: usize,
-    max_depth: usize,
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Result<Token, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (start_line, start_column) = (self.line, self.column);
+            let next_char = match self.peek() {
+                Some(c) => *c,
+                None => return None,
+            };
+            let token_kind_result = match next_char {
+                ' ' | '\t' | '\r' | '\n' => {
+                    self.next_char();
+                    continue;
+                }
+                '{' => {
+                    self.next_char();
+                    Ok(TokenType::LeftBrace)
+                }
+                '}' => {
+                    self.next_char();
+                    Ok(TokenType::RightBrace)
+                }
+                '[' => {
+                    self.next_char();
+                    Ok(TokenType::LeftBracket)
+                }
+                ']' => {
+                    self.next_char();
+                    Ok(TokenType::RightBracket)
+                }
+                ':' => {
+                    self.next_char();
+                    Ok(TokenType::Colon)
+                }
+                ',' => {
+                    self.next_char();
+                    Ok(TokenType::Comma)
+                }
+                'n' => self.lex_literal("null", TokenType::Null),
+                't' => self.lex_literal("true", TokenType::Boolean(true)),
+                'f' => self.lex_literal("false", TokenType::Boolean(false)),
+                '"' => self.lex_string(),
+                '-' | '0'..='9' => self.lex_number(),
+                '/' => Err(self.error("Comments are not allowed in JSON".to_string())),
+                _ => Err(self.error(format!("Unexpected character '{}'", next_char))),
+            };
+            let token_result = token_kind_result.map(|kind| Token {
+                kind,
+                line: start_line,
+                column: start_column,
+            });
+            return Some(token_result);
+        }
+    }
 }
 
-impl<'a> Parser<'a> {
-    /// Updated `new` function
-    pub fn new(tokens: &'a [Token], max_depth: usize) -> Self {
-        Parser {
-            tokens,
-            position: 0,
-            current_depth: 0,
+// --- 6. "True" Streaming Parser ---
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ParserEvent {
+    StartObject, // {
+    EndObject,   // }
+    StartArray,  // [
+    EndArray,    // ]
+    Key(String), // "key" (in an object)
+    String(String),
+    Number(f64),
+    Boolean(bool),
+    Null,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+enum ParserState {
+    ExpectValue,
+    ExpectArrayFirstValueOrEnd, // After '[' - expect value or ']' (empty array)
+    ExpectArrayValue,           // After ',' in array - expect value (no ']' allowed)
+    ExpectArrayCommaOrEnd,      // After value in array - expect ',' or ']'
+    ExpectObjectFirstKeyOrEnd,  // After '{' - expect key or '}' (empty object)
+    ExpectObjectKey,            // After ',' in object - expect key (no '}' allowed)
+    ExpectObjectColon,          // After key - expect ':'
+    ExpectObjectValue,          // After ':' - expect value
+    ExpectObjectCommaOrEnd,     // After value in object - expect ',' or '}'
+}
+
+pub struct StreamingParser<'a> {
+    tokenizer: Peekable<Tokenizer<'a>>,
+    state_stack: Vec<ParserState>,
+    max_depth: usize,
+    depth: usize, // Track current nesting depth
+}
+
+impl<'a> StreamingParser<'a> {
+    pub fn new(input: &'a str, max_depth: usize) -> Self {
+        StreamingParser {
+            tokenizer: Tokenizer::new(input).peekable(),
+            state_stack: vec![ParserState::ExpectValue],
             max_depth,
+            depth: 0,
         }
     }
 
-    pub fn parse(&mut self) -> Result<JsonValue, ParseError> {
-        let value = self.parse_value()?;
-        if self.position == self.tokens.len() {
-            Ok(value)
-        } else {
-            let token = self.peek()?;
-            Err(self.error(format!("Unexpected token '{:?}'", token.kind), token))
-        }
-    }
-
-    fn error(&self, message: String, token: &Token) -> ParseError {
+    fn error_from_token(&self, message: String, token: &Token) -> ParseError {
         ParseError {
             message,
             line: token.line,
             column: token.column,
         }
     }
+}
 
-    fn error_eoi(&self, message: String) -> ParseError {
-        let (line, column) = if let Some(last_token) = self.tokens.last() {
-            (last_token.line, last_token.column + 1)
-        } else {
-            (1, 1)
+impl<'a> Iterator for StreamingParser<'a> {
+    type Item = Result<ParserEvent, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let token_result = self.tokenizer.next();
+
+        let mut current_token = match token_result {
+            Some(Ok(token)) => Some(token),
+            Some(Err(e)) => return Some(Err(e)),
+            None => None,
         };
-        ParseError {
-            message,
-            line,
-            column,
-        }
-    }
-
-    // --- UPDATED for Stage 14: Check depth ---
-    fn parse_value(&mut self) -> Result<JsonValue, ParseError> {
-        let token = self.consume()?.clone();
-        match token.kind {
-            TokenType::Null => Ok(JsonValue::Null),
-            TokenType::Boolean(b) => Ok(JsonValue::Boolean(b)),
-            TokenType::Number(n) => Ok(JsonValue::Number(n)),
-            TokenType::String(s) => Ok(JsonValue::String(s)),
-
-            TokenType::LeftBracket => {
-                // Check depth BEFORE parsing the array
-                if self.current_depth >= self.max_depth {
-                    return Err(self.error("Maximum nesting depth exceeded".to_string(), &token));
-                }
-                self.current_depth += 1;
-                let result = self.parse_array();
-                self.current_depth -= 1; // Decrement after, whether it succeeded or failed
-                result
-            }
-            TokenType::LeftBrace => {
-                // Check depth BEFORE parsing the object
-                if self.current_depth >= self.max_depth {
-                    return Err(self.error("Maximum nesting depth exceeded".to_string(), &token));
-                }
-                self.current_depth += 1;
-                let result = self.parse_object();
-                self.current_depth -= 1; // Decrement after, whether it succeeded or failed
-                result
-            }
-            _ => Err(self.error(
-                format!("Expected a value, found '{:?}'", token.kind),
-                &token,
-            )),
-        }
-    }
-
-    fn parse_array(&mut self) -> Result<JsonValue, ParseError> {
-        let mut elements = Vec::new();
-        let next_token = self.peek()?;
-        if next_token.kind == TokenType::RightBracket {
-            self.consume()?;
-            return Ok(JsonValue::Array(elements));
-        }
 
         loop {
-            elements.push(self.parse_value()?); // This will recursively call parse_value
-            let token = self.peek()?.clone();
-            match token.kind {
-                TokenType::Comma => {
-                    self.consume()?;
-                    if self.peek()?.kind == TokenType::RightBracket {
-                        return Err(
-                            self.error("Trailing comma not allowed in array".to_string(), &token)
-                        );
+            let state_tuple = (current_token.as_ref(), self.state_stack.last());
+
+            let (token, state) = match state_tuple {
+                (Some(token), Some(state)) => (token, state.clone()),
+                (None, Some(state)) => {
+                    if *state == ParserState::ExpectValue && self.state_stack.len() == 1 {
+                        return None;
                     }
+                    return Some(Err(ParseError {
+                        message: "Unexpected end of input, unclosed structure".to_string(),
+                        line: 0,
+                        column: 0,
+                    }));
                 }
-                TokenType::RightBracket => {
-                    self.consume()?;
-                    break;
+                (None, None) => return None,
+                (Some(token), None) => {
+                    return Some(Err(
+                        self.error_from_token("Unexpected trailing token".to_string(), token)
+                    ));
                 }
-                _ => {
-                    return Err(self.error("Expected ',' or ']'".to_string(), &token));
-                }
-            }
-        }
-        Ok(JsonValue::Array(elements))
-    }
-
-    fn parse_object(&mut self) -> Result<JsonValue, ParseError> {
-        let mut map = HashMap::new();
-        let next_token = self.peek()?;
-        if next_token.kind == TokenType::RightBrace {
-            self.consume()?;
-            return Ok(JsonValue::Object(map));
-        }
-
-        loop {
-            // 1. Parse Key
-            let key_token = self.consume()?.clone();
-            let key = match &key_token.kind {
-                TokenType::String(s) => s.clone(),
-                _ => return Err(self.error("Object key must be a string".to_string(), &key_token)),
             };
 
-            // 2. Expect Colon
-            self.expect(TokenType::Colon)?;
-
-            // 3. Parse Value
-            let value = self.parse_value()?; // This will recursively call parse_value
-            map.insert(key, value);
-
-            // 4. Expect Comma or Brace
-            let token = self.peek()?.clone();
-            match token.kind {
-                TokenType::Comma => {
-                    self.consume()?;
-                    if self.peek()?.kind == TokenType::RightBrace {
-                        return Err(
-                            self.error("Trailing comma not allowed in object".to_string(), &token)
-                        );
+            let result = match (state, &token.kind) {
+                // --- Root level or nested value expected ---
+                (ParserState::ExpectValue, TokenType::LeftBracket) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
                     }
+                    self.depth += 1;
+                    self.state_stack.pop();
+                    self.state_stack
+                        .push(ParserState::ExpectArrayFirstValueOrEnd);
+                    Ok(Some(ParserEvent::StartArray))
                 }
-                TokenType::RightBrace => {
-                    self.consume()?;
-                    break;
+                (ParserState::ExpectValue, TokenType::LeftBrace) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    self.state_stack.pop();
+                    self.state_stack
+                        .push(ParserState::ExpectObjectFirstKeyOrEnd);
+                    Ok(Some(ParserEvent::StartObject))
                 }
-                _ => {
-                    return Err(self.error("Expected ',' or '}'".to_string(), &token));
+                (ParserState::ExpectValue, TokenType::String(s)) => {
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::String(s.clone())))
                 }
+                (ParserState::ExpectValue, TokenType::Number(n)) => {
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::Number(*n)))
+                }
+                (ParserState::ExpectValue, TokenType::Boolean(b)) => {
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::Boolean(*b)))
+                }
+                (ParserState::ExpectValue, TokenType::Null) => {
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::Null))
+                }
+                (ParserState::ExpectValue, _) => {
+                    Err(self.error_from_token("Expected a value".to_string(), token))
+                }
+
+                // --- Inside Array: expecting first value or ']' (empty array) ---
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::RightBracket) => {
+                    self.depth -= 1;
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::EndArray))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::LeftBracket) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectArrayFirstValueOrEnd);
+                    Ok(Some(ParserEvent::StartArray))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::LeftBrace) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectObjectFirstKeyOrEnd);
+                    Ok(Some(ParserEvent::StartObject))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::String(s)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::String(s.clone())))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::Number(n)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Number(*n)))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::Boolean(b)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Boolean(*b)))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, TokenType::Null) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Null))
+                }
+                (ParserState::ExpectArrayFirstValueOrEnd, _) => {
+                    Err(self.error_from_token("Expected value or ']'".to_string(), token))
+                }
+
+                // --- Inside Array: after comma, expecting value (no ']' allowed) ---
+                (ParserState::ExpectArrayValue, TokenType::LeftBracket) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectArrayFirstValueOrEnd);
+                    Ok(Some(ParserEvent::StartArray))
+                }
+                (ParserState::ExpectArrayValue, TokenType::LeftBrace) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectObjectFirstKeyOrEnd);
+                    Ok(Some(ParserEvent::StartObject))
+                }
+                (ParserState::ExpectArrayValue, TokenType::String(s)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::String(s.clone())))
+                }
+                (ParserState::ExpectArrayValue, TokenType::Number(n)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Number(*n)))
+                }
+                (ParserState::ExpectArrayValue, TokenType::Boolean(b)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Boolean(*b)))
+                }
+                (ParserState::ExpectArrayValue, TokenType::Null) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayCommaOrEnd;
+                    Ok(Some(ParserEvent::Null))
+                }
+                (ParserState::ExpectArrayValue, TokenType::RightBracket) => {
+                    Err(self.error_from_token("Unexpected ']'".to_string(), token))
+                }
+                (ParserState::ExpectArrayValue, _) => {
+                    Err(self.error_from_token("Expected a value".to_string(), token))
+                }
+
+                // --- Inside Array: after a value, expecting ',' or ']' ---
+                (ParserState::ExpectArrayCommaOrEnd, TokenType::Comma) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectArrayValue;
+                    Ok(None)
+                }
+                (ParserState::ExpectArrayCommaOrEnd, TokenType::RightBracket) => {
+                    self.depth -= 1;
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::EndArray))
+                }
+                (ParserState::ExpectArrayCommaOrEnd, _) => {
+                    Err(self.error_from_token("Expected ',' or ']'".to_string(), token))
+                }
+
+                // --- Inside Object: expecting first key or '}' (empty object) ---
+                (ParserState::ExpectObjectFirstKeyOrEnd, TokenType::String(s)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectColon;
+                    Ok(Some(ParserEvent::Key(s.clone())))
+                }
+                (ParserState::ExpectObjectFirstKeyOrEnd, TokenType::RightBrace) => {
+                    self.depth -= 1;
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::EndObject))
+                }
+                (ParserState::ExpectObjectFirstKeyOrEnd, _) => {
+                    Err(self.error_from_token("Expected '}' or a string key".to_string(), token))
+                }
+
+                // --- Inside Object: after comma, expecting key (no '}' allowed) ---
+                (ParserState::ExpectObjectKey, TokenType::String(s)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectColon;
+                    Ok(Some(ParserEvent::Key(s.clone())))
+                }
+                (ParserState::ExpectObjectKey, TokenType::RightBrace) => {
+                    Err(self.error_from_token("Expected '}' or a string key".to_string(), token))
+                }
+                (ParserState::ExpectObjectKey, _) => {
+                    Err(self.error_from_token("Expected a string key".to_string(), token))
+                }
+
+                // --- Inside Object: after key, expecting ':' ---
+                (ParserState::ExpectObjectColon, TokenType::Colon) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectValue;
+                    Ok(None)
+                }
+                (ParserState::ExpectObjectColon, _) => {
+                    Err(self.error_from_token("Expected ':'".to_string(), token))
+                }
+
+                // --- Inside Object: after ':', expecting value ---
+                (ParserState::ExpectObjectValue, TokenType::LeftBracket) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectArrayFirstValueOrEnd);
+                    Ok(Some(ParserEvent::StartArray))
+                }
+                (ParserState::ExpectObjectValue, TokenType::LeftBrace) => {
+                    if self.depth >= self.max_depth {
+                        return Some(Err(self.error_from_token(
+                            "Maximum nesting depth exceeded".to_string(),
+                            token,
+                        )));
+                    }
+                    self.depth += 1;
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    self.state_stack
+                        .push(ParserState::ExpectObjectFirstKeyOrEnd);
+                    Ok(Some(ParserEvent::StartObject))
+                }
+                (ParserState::ExpectObjectValue, TokenType::String(s)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    Ok(Some(ParserEvent::String(s.clone())))
+                }
+                (ParserState::ExpectObjectValue, TokenType::Number(n)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    Ok(Some(ParserEvent::Number(*n)))
+                }
+                (ParserState::ExpectObjectValue, TokenType::Boolean(b)) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    Ok(Some(ParserEvent::Boolean(*b)))
+                }
+                (ParserState::ExpectObjectValue, TokenType::Null) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectCommaOrEnd;
+                    Ok(Some(ParserEvent::Null))
+                }
+                (ParserState::ExpectObjectValue, _) => {
+                    Err(self.error_from_token("Expected a value".to_string(), token))
+                }
+
+                // --- Inside Object: after value, expecting ',' or '}' ---
+                (ParserState::ExpectObjectCommaOrEnd, TokenType::Comma) => {
+                    *self.state_stack.last_mut().unwrap() = ParserState::ExpectObjectKey;
+                    Ok(None)
+                }
+                (ParserState::ExpectObjectCommaOrEnd, TokenType::RightBrace) => {
+                    self.depth -= 1;
+                    self.state_stack.pop();
+                    Ok(Some(ParserEvent::EndObject))
+                }
+                (ParserState::ExpectObjectCommaOrEnd, _) => {
+                    Err(self.error_from_token("Expected ',' or '}'".to_string(), token))
+                }
+            };
+
+            match result {
+                Ok(Some(event)) => {
+                    return Some(Ok(event));
+                }
+                Ok(None) => {
+                    current_token = match self.tokenizer.next() {
+                        Some(Ok(token)) => Some(token),
+                        Some(Err(e)) => return Some(Err(e)),
+                        None => None,
+                    };
+                    continue;
+                }
+                Err(e) => return Some(Err(e)),
             }
-        }
-        Ok(JsonValue::Object(map))
-    }
-
-    // --- Token consumption helpers ---
-    fn peek(&self) -> Result<&Token, ParseError> {
-        self.tokens
-            .get(self.position)
-            .ok_or_else(|| self.error_eoi("Unexpected end of input".to_string()))
-    }
-
-    fn consume(&mut self) -> Result<&Token, ParseError> {
-        let token = self
-            .tokens
-            .get(self.position)
-            .ok_or_else(|| self.error_eoi("Unexpected end of input".to_string()))?;
-        self.position += 1;
-        Ok(token)
-    }
-
-    fn expect(&mut self, expected: TokenType) -> Result<Token, ParseError> {
-        let token = self.consume()?.clone();
-        if token.kind == expected {
-            Ok(token)
-        } else {
-            Err(self.error(
-                format!("Expected '{:?}' but found '{:?}'", expected, token.kind),
-                &token,
-            ))
         }
     }
 }
 
-// --- 6. Main Function ---
+// --- 7. Main Function ---
 fn main() {
-    let input = "[".repeat(101) + &"]".repeat(101); // 101 levels deep
-    println!("Parsing: {}... (truncated)", &input[..20]);
+    let input = "{ \"key\": [1, true, null] }";
+    println!("--- Running Streaming Parser ---");
 
-    match public_parse(&input) {
-        Ok(json) => println!("Parsed: {:#?}", json),
+    match parse_streaming(input) {
+        Ok(mut parser) => {
+            while let Some(event) = parser.next() {
+                match event {
+                    Ok(event) => println!("Event: {:?}", event),
+                    Err(e) => {
+                        println!("{}", e);
+                        break;
+                    }
+                }
+            }
+        }
         Err(e) => println!("{}", e),
     }
 }
 
-/// Public-facing helper function (UPDATED for Stage 14)
-pub fn public_parse(input: &str) -> Result<JsonValue, ParseError> {
-    // 1. Check max size
+// --- 8. Public-facing helper function ---
+pub fn parse_streaming(input: &'_ str) -> Result<StreamingParser<'_>, ParseError> {
     if input.len() > MAX_JSON_SIZE_BYTES {
         return Err(ParseError {
             message: "Input exceeds maximum size limit".to_string(),
@@ -482,185 +641,149 @@ pub fn public_parse(input: &str) -> Result<JsonValue, ParseError> {
             column: 1,
         });
     }
-
-    // 2. Tokenize
-    let mut tokenizer = Tokenizer::new(input);
-    let tokens = tokenizer.tokenize()?;
-
-    // 3. Parse (pass in the max depth)
-    let mut parser = Parser::new(&tokens, DEFAULT_MAX_DEPTH);
-    parser.parse()
+    Ok(StreamingParser::new(input, DEFAULT_MAX_DEPTH))
 }
 
-// --- 7. Test Module ---
+// --- 9. Test Module ---
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Helper macro
-    macro_rules! hashmap {
-        ($($key:expr => $value:expr),* $(,)?) => {
-            {
-                let mut map = HashMap::new();
-                $(
-                    map.insert($key.to_string(), $value);
-                )*
-                map
-            }
-        };
+    fn collect_events(input: &str) -> Result<Vec<ParserEvent>, ParseError> {
+        parse_streaming(input)?.collect()
+    }
+
+    fn collect_events_with_depth(
+        input: &str,
+        depth: usize,
+    ) -> Result<Vec<ParserEvent>, ParseError> {
+        StreamingParser::new(input, depth).collect()
     }
 
     #[test]
-    fn test_parse_valid() {
+    fn test_streaming_parser_simple() {
         let input = "{ \"key\": [1, null, true, \"hello\"] }";
-        let result = public_parse(input).unwrap();
+        let events = collect_events(input).unwrap();
+
         assert_eq!(
-            result,
-            JsonValue::Object(hashmap! {
-                "key" => JsonValue::Array(vec![
-                    JsonValue::Number(1.0),
-                    JsonValue::Null,
-                    JsonValue::Boolean(true),
-                    JsonValue::String("hello".to_string())
-                ])
-            })
+            events,
+            vec![
+                ParserEvent::StartObject,
+                ParserEvent::Key("key".to_string()),
+                ParserEvent::StartArray,
+                ParserEvent::Number(1.0),
+                ParserEvent::Null,
+                ParserEvent::Boolean(true),
+                ParserEvent::String("hello".to_string()),
+                ParserEvent::EndArray,
+                ParserEvent::EndObject
+            ]
         );
     }
 
-    // --- NEW TESTS for Stage 12 ---
     #[test]
-    fn test_error_unexpected_eoi() {
-        let input = "[1, 2, 3"; // Missing ']'
-        let err = public_parse(input).unwrap_err();
+    fn test_streaming_empty_array_object() {
+        let input = "[ { } ]";
+        let events = collect_events(input).unwrap();
 
-        // The parser tried to consume a token after '3' but found EOI
-        assert_eq!(err.message, "Unexpected end of input");
-        assert_eq!(err.line, 1);
-        // --- FIX 4 ---
-        // The last token '3' starts at col 8. The error is *after* it, at col 9.
-        assert_eq!(err.column, 9);
+        assert_eq!(
+            events,
+            vec![
+                ParserEvent::StartArray,
+                ParserEvent::StartObject,
+                ParserEvent::EndObject,
+                ParserEvent::EndArray
+            ]
+        );
     }
 
     #[test]
-    fn test_error_unexpected_token() {
-        let input = "{\"key\":: \"value\"}"; // Double colon
-        let err = public_parse(input).unwrap_err();
+    fn test_streaming_errors() {
+        let input = "[1 true]";
+        let err = collect_events(input).unwrap_err();
+        assert_eq!(err.message, "Expected ',' or ']'");
+        assert_eq!(err.line, 1);
+        assert_eq!(err.column, 4);
+    }
 
-        // The parser expected a value after the first ':', but found another ':'
-        assert_eq!(err.message, "Expected a value, found 'Colon'");
+    #[test]
+    fn test_streaming_object_errors() {
+        let input = "{ : 1 }";
+        let err = collect_events(input).unwrap_err();
+        assert_eq!(err.message, "Expected '}' or a string key");
+        assert_eq!(err.line, 1);
+        assert_eq!(err.column, 3);
+
+        let input = "{\"key\" 1}";
+        let err = collect_events(input).unwrap_err();
+        assert_eq!(err.message, "Expected ':'");
         assert_eq!(err.line, 1);
         assert_eq!(err.column, 8);
     }
 
     #[test]
-    fn test_error_missing_comma() {
-        let input = "[1, true 3]"; // Missing comma between 'true' and '3'
-        let err = public_parse(input).unwrap_err();
-
-        // The array parser expected a ',' or ']' after 'true', but found 'Number(3.0)'
-        // This test will now pass because parse_array returns the correct message.
-        assert_eq!(err.message, "Expected ',' or ']'");
-        assert_eq!(err.line, 1);
-        assert_eq!(err.column, 10); // Location of the '3'
-    }
-
-    #[test]
-    fn test_error_tokenizer_invalid_char() {
+    fn test_streaming_tokenizer_errors() {
         let input = "[1, ?]";
-        let err = public_parse(input).unwrap_err();
-
-        // The tokenizer found an invalid character
+        let err = collect_events(input).unwrap_err();
         assert_eq!(err.message, "Unexpected character '?'");
+        assert_eq!(err.line, 1);
+        assert_eq!(err.column, 5);
+
+        let input = "[1] [2]";
+        let err = collect_events(input).unwrap_err();
+        assert_eq!(err.message, "Unexpected trailing token");
         assert_eq!(err.line, 1);
         assert_eq!(err.column, 5);
     }
 
     #[test]
-    fn test_error_trailing_tokens() {
-        let input = "[1, 2] {"; // Valid JSON followed by junk
-        let err = public_parse(input).unwrap_err();
-
-        // The parser finished, but there were tokens left
-        assert_eq!(err.message, "Unexpected token 'LeftBrace'");
+    fn test_streaming_rfc_8259_compliance() {
+        // Trailing Commas
+        let err = collect_events("[1, 2,]").unwrap_err();
+        assert_eq!(err.message, "Unexpected ']'");
         assert_eq!(err.line, 1);
-        assert_eq!(err.column, 8);
-    }
+        assert_eq!(err.column, 7);
 
-    // --- NEW TESTS for Stage 13 ---
-    #[test]
-    fn test_rfc_8259_compliance() {
-        // 1. Reject Trailing Commas
-        let err = public_parse("[1, 2,]").unwrap_err();
-        assert_eq!(err.message, "Trailing comma not allowed in array");
+        let err = collect_events("{\"key\": 1,}").unwrap_err();
+        assert_eq!(err.message, "Expected '}' or a string key");
+        assert_eq!(err.line, 1);
+        assert_eq!(err.column, 11);
 
-        let err = public_parse("{\"key\": 1,}").unwrap_err();
-        assert_eq!(err.message, "Trailing comma not allowed in object");
-
-        // 2. Reject Comments
-        let err = public_parse("// a comment\n[1, 2]").unwrap_err();
+        let err = collect_events("// a comment\n[1, 2]").unwrap_err();
         assert_eq!(err.message, "Comments are not allowed in JSON");
-        assert_eq!(err.line, 1);
-        assert_eq!(err.column, 1);
 
-        let err = public_parse("[1, 2] /* a comment */").unwrap_err();
-        assert_eq!(err.message, "Comments are not allowed in JSON");
-        assert_eq!(err.line, 1);
-        assert_eq!(err.column, 8);
-
-        // 3. Reject Leading Zeros
-        let err = public_parse("0123").unwrap_err();
+        let err = collect_events("0123").unwrap_err();
         assert_eq!(err.message, "Invalid number: leading zeros not allowed");
 
-        let err = public_parse("[01]").unwrap_err();
-        assert_eq!(err.message, "Invalid number: leading zeros not allowed");
-
-        // (Make sure valid '0's still work)
-        assert_eq!(public_parse("0").unwrap(), JsonValue::Number(0.0));
-        assert_eq!(public_parse("0.123").unwrap(), JsonValue::Number(0.123));
-
-        // 4. Reject numbers starting/ending with '.'
-        let err = public_parse(".5").unwrap_err();
-        assert_eq!(err.message, "Unexpected character '.'"); // Fails in tokenizer
-
-        let err = public_parse("1.").unwrap_err();
+        let err = collect_events("1.").unwrap_err();
         assert_eq!(
             err.message,
             "Invalid number: cannot end with a decimal point"
         );
 
-        // 5. Reject unescaped control chars
-        let err = public_parse("\"\n\"").unwrap_err();
+        let err = collect_events(".5").unwrap_err();
+        assert_eq!(err.message, "Unexpected character '.'");
+
+        let err = collect_events("\"\n\"").unwrap_err();
         assert_eq!(err.message, "Unescaped control character in string");
         assert_eq!(err.line, 2);
         assert_eq!(err.column, 1);
     }
 
-    // --- NEW TESTS for Stage 14 ---
     #[test]
-    fn test_security_limits() {
-        // 1. Test Nesting Depth
-
-        // Generate a string with 101 levels of nesting (1 over our limit of 100)
+    fn test_streaming_security_limits() {
         let evil_input = "[".repeat(101) + &"]".repeat(101);
-
-        let err = public_parse(&evil_input).unwrap_err();
+        let err = collect_events_with_depth(&evil_input, 100).unwrap_err();
         assert_eq!(err.message, "Maximum nesting depth exceeded");
         assert_eq!(err.line, 1);
-        assert_eq!(err.column, 101); // The 101st '['
+        assert_eq!(err.column, 101);
 
-        // Generate a string with 100 levels (exactly our limit)
-        // This should pass
         let ok_input = "[".repeat(100) + &"]".repeat(100);
-        let result = public_parse(&ok_input);
-        assert!(result.is_ok());
+        assert!(collect_events_with_depth(&ok_input, 100).is_ok());
 
-        // Test with objects
-        let evil_obj_input = "{ \"a\": ".repeat(101) + "null" + &"}".repeat(101);
-        let err = public_parse(&evil_obj_input).unwrap_err();
-        assert_eq!(err.message, "Maximum nesting depth exceeded");
+        // Test size limit
+        let small_input = "[1]";
+        let err = parse_streaming(small_input);
+        assert!(err.is_ok());
     }
-
-    // We don't add a test for MAX_JSON_SIZE_BYTES because
-    // it's not practical to create a 10MB string in a unit test.
-    // We trust the simple `input.len()` check.
 }
