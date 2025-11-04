@@ -161,28 +161,22 @@ mod tests {
     // --- NEW TESTS for Stage 4 ---
     #[test]
     fn test_parse_strings() {
-        // Valid empty string [cite: 62]
         let (value, rest) = parse_value("\"\"").unwrap();
         assert_eq!(value, JsonValue::String("".to_string()));
         assert_eq!(rest, "");
 
-        // Valid simple string [cite: 65]
         let (value, rest) = parse_value("\"hello\"").unwrap();
         assert_eq!(value, JsonValue::String("hello".to_string()));
         assert_eq!(rest, "");
 
-        // Valid with trailing data
         let (value, rest) = parse_value("\"hello\", 123").unwrap();
         assert_eq!(value, JsonValue::String("hello".to_string()));
         assert_eq!(rest, ", 123");
 
-        // Invalid: Unmatched quote [cite: 68]
         assert!(parse_value("\"hello").is_err());
 
-        // Invalid: Unquoted string [cite: 71]
         assert!(parse_value("hello").is_err());
 
-        // Invalid: Single quotes are not allowed in JSON [cite: 70]
         assert!(parse_value("'hello'").is_err());
     }
 }
