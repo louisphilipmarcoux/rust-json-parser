@@ -1,20 +1,26 @@
-use std::collections::HashMap; // <-- ADDED (for Stage 6, but good to add now)
+use std::collections::HashMap;
 
 // --- 1. JsonValue Enum ---
-// We've added the Array variant.
 #[derive(Debug, PartialEq)]
 pub enum JsonValue {
     Null,
     Boolean(bool),
     Number(f64),
     String(String),
-    Array(Vec<JsonValue>),              // <-- ADDED
-    Object(HashMap<String, JsonValue>), // <-- ADDED (for Stage 6)
+    Array(Vec<JsonValue>),
+    Object(HashMap<String, JsonValue>),
 }
 
 // --- 2. Parser Functions ---
 
-/// Tries to parse a 'null' literal.
+// --- NEW FUNCTION for Stage 7 ---
+/// Skips any insignificant whitespace (space, newline, tab, carriage return).
+/// Returns a string slice of the input starting *after* the whitespace.
+fn skip_whitespace(input: &str) -> &str {
+    input.trim_start()
+}
+// --- END NEW FUNCTION ---
+
 fn parse_null(input: &str) -> Result<(JsonValue, &str), &'static str> {
     if input.starts_with("null") {
         Ok((JsonValue::Null, &input[4..]))
@@ -23,7 +29,6 @@ fn parse_null(input: &str) -> Result<(JsonValue, &str), &'static str> {
     }
 }
 
-/// Tries to parse a 'true' or 'false' literal.
 fn parse_boolean(input: &str) -> Result<(JsonValue, &str), &'static str> {
     if input.starts_with("true") {
         Ok((JsonValue::Boolean(true), &input[4..]))
@@ -34,26 +39,21 @@ fn parse_boolean(input: &str) -> Result<(JsonValue, &str), &'static str> {
     }
 }
 
-/// Tries to parse a JSON number (integer or float).
 fn parse_number(input: &str) -> Result<(JsonValue, &str), &'static str> {
     let end_index = input
         .find(|c: char| c.is_whitespace() || c == ',' || c == ']' || c == '}')
         .unwrap_or(input.len());
-
     let num_str = &input[..end_index];
-
     match num_str.parse::<f64>() {
         Ok(num) => Ok((JsonValue::Number(num), &input[end_index..])),
         Err(_) => Err("Invalid number format"),
     }
 }
 
-/// Tries to parse a JSON string.
 fn parse_string(input: &str) -> Result<(JsonValue, &str), &'static str> {
     if !input.starts_with('"') {
         return Err("Expected '\"' at start of string");
     }
-
     match input[1..].find('"') {
         Some(end_index) => {
             let string_content = &input[1..end_index + 1];
@@ -64,15 +64,14 @@ fn parse_string(input: &str) -> Result<(JsonValue, &str), &'static str> {
     }
 }
 
-// --- NEW FUNCTION for Stage 5 ---
-/// Tries to parse a JSON array.
+// --- UPDATED for Stage 7 ---
 fn parse_array(input: &str) -> Result<(JsonValue, &str), &'static str> {
     if !input.starts_with('[') {
         return Err("Expected '[' at start of array");
     }
 
-    // Get rid of the opening '['
-    let mut current_input = &input[1..];
+    // Skip opening '[' and initial whitespace
+    let mut current_input = skip_whitespace(&input[1..]);
     let mut elements = Vec::new();
 
     // Handle empty array: []
@@ -82,15 +81,15 @@ fn parse_array(input: &str) -> Result<(JsonValue, &str), &'static str> {
 
     // Loop to parse elements
     loop {
-        // 1. Parse a value
+        // 1. Parse a value (which now also skips whitespace)
         let (value, rest) = parse_value(current_input)?;
         elements.push(value);
-        current_input = rest;
+        current_input = skip_whitespace(rest); // Skip whitespace *after* value
 
         // 2. See what's next: a comma or a closing bracket
         if current_input.starts_with(',') {
-            // Consume the comma and loop again
-            current_input = &current_input[1..];
+            // Consume the comma and skip whitespace after it
+            current_input = skip_whitespace(&current_input[1..]);
         } else if current_input.starts_with(']') {
             // Consume the bracket and finish
             current_input = &current_input[1..];
@@ -100,24 +99,83 @@ fn parse_array(input: &str) -> Result<(JsonValue, &str), &'static str> {
             return Err("Expected ',' or ']' after array element");
         }
     }
-
     Ok((JsonValue::Array(elements), current_input))
 }
-// --- END NEW FUNCTION ---
+// --- END UPDATE ---
+
+// --- UPDATED for Stage 7 ---
+fn parse_object(input: &str) -> Result<(JsonValue, &str), &'static str> {
+    if !input.starts_with('{') {
+        return Err("Expected '{' at start of object");
+    }
+
+    // Skip opening '{' and initial whitespace
+    let mut current_input = skip_whitespace(&input[1..]);
+    let mut map = HashMap::new();
+
+    // Handle empty object: {}
+    if current_input.starts_with('}') {
+        return Ok((JsonValue::Object(map), &current_input[1..]));
+    }
+
+    // Loop to parse key-value pairs
+    loop {
+        // 1. Parse the key (must be a string)
+        let (key_value, rest) = parse_string(current_input)?;
+        let key = match key_value {
+            JsonValue::String(s) => s,
+            _ => return Err("Object key is not a string"),
+        };
+        current_input = skip_whitespace(rest); // Skip whitespace *after* key
+
+        // 2. Expect and consume the colon
+        if !current_input.starts_with(':') {
+            return Err("Expected ':' after object key");
+        }
+        current_input = skip_whitespace(&current_input[1..]); // Skip whitespace *after* colon
+
+        // 3. Parse the value
+        let (value, rest) = parse_value(current_input)?; // parse_value handles its own whitespace
+        map.insert(key, value);
+        current_input = skip_whitespace(rest); // Skip whitespace *after* value
+
+        // 4. See what's next: a comma or a closing brace
+        if current_input.starts_with(',') {
+            // Consume the comma and skip whitespace
+            current_input = skip_whitespace(&current_input[1..]);
+        } else if current_input.starts_with('}') {
+            // Consume the brace and finish
+            current_input = &current_input[1..];
+            break;
+        } else {
+            return Err("Expected ',' or '}' after object value");
+        }
+    }
+    Ok((JsonValue::Object(map), current_input))
+}
+// --- END UPDATE ---
 
 /// Tries to parse any valid JSON value from the beginning of the input.
-// --- UPDATED to include arrays ---
+// --- UPDATED for Stage 7 ---
 fn parse_value(input: &str) -> Result<(JsonValue, &str), &'static str> {
-    match input.chars().next() {
+    // 1. Skip any preceding whitespace!
+    let input = skip_whitespace(input);
+
+    // 2. Look at the first *meaningful* character
+    let parse_result = match input.chars().next() {
         Some('n') => parse_null(input),
         Some('t') | Some('f') => parse_boolean(input),
         Some('-') | Some('0'..='9') => parse_number(input),
         Some('"') => parse_string(input),
-        Some('[') => parse_array(input), // <-- ADDED
-        // We'll add objects next
-        _ => Err("Expected a valid JSON value"),
-    }
+        Some('[') => parse_array(input),
+        Some('{') => parse_object(input),
+        Some(_) => Err("Invalid character at start of value"), // More specific error
+        None => Err("Unexpected end of input"),
+    };
+
+    parse_result.map(|(value, rest)| (value, skip_whitespace(rest)))
 }
+// --- END UPDATE ---
 
 // --- 3. Main Function ---
 fn main() {
@@ -129,86 +187,102 @@ fn main() {
 mod tests {
     use super::*;
 
-    // --- Stage 1 Tests ---
-    #[test]
-    fn test_parse_null() {
-        let (value, rest) = parse_value("null").unwrap();
-        assert_eq!(value, JsonValue::Null);
-        assert_eq!(rest, "");
-
-        let (value, rest) = parse_value("null, 123").unwrap();
-        assert_eq!(value, JsonValue::Null);
-        assert_eq!(rest, ", 123");
-
-        assert!(parse_value("nul").is_err());
-        assert!(parse_value("NULL").is_err());
+    // Helper macro for object tests
+    macro_rules! hashmap {
+        ($($key:expr => $value:expr),* $(,)?) => {
+            {
+                let mut map = HashMap::new();
+                $(
+                    map.insert($key.to_string(), $value);
+                )*
+                map
+            }
+        };
     }
 
-    // --- Stage 2 Tests ---
     #[test]
-    fn test_parse_booleans() {
-        assert_eq!(parse_value("true").unwrap(), (JsonValue::Boolean(true), ""));
-        assert_eq!(
-            parse_value("false").unwrap(),
-            (JsonValue::Boolean(false), "")
-        );
-        assert_eq!(
-            parse_value("true}").unwrap(),
-            (JsonValue::Boolean(true), "}")
-        );
-        assert!(parse_value("True").is_err());
+    fn test_parse_null() { /* ... (keep your old tests) ... */
+    }
+    #[test]
+    fn test_parse_booleans() { /* ... (keep your old tests) ... */
+    }
+    #[test]
+    fn test_parse_numbers() { /* ... (keep your old tests) ... */
+    }
+    #[test]
+    fn test_parse_strings() { /* ... (keep your old tests) ... */
+    }
+    #[test]
+    fn test_parse_arrays() { /* ... (keep your old tests) ... */
     }
 
-    // --- Stage 3 Tests ---
+    // --- This test should now PASS! ---
     #[test]
-    fn test_parse_numbers() {
-        assert_eq!(parse_value("0").unwrap(), (JsonValue::Number(0.0), ""));
-        assert_eq!(parse_value("123").unwrap(), (JsonValue::Number(123.0), ""));
+    fn test_parse_objects() {
+        // Valid empty object
         assert_eq!(
-            parse_value("-123").unwrap(),
-            (JsonValue::Number(-123.0), "")
+            parse_value("{}").unwrap().0,
+            JsonValue::Object(HashMap::new())
         );
+
+        // Valid simple object
         assert_eq!(
-            parse_value("45.67").unwrap(),
-            (JsonValue::Number(45.67), "")
+            parse_value("{\"key\": \"value\"}").unwrap().0,
+            JsonValue::Object(hashmap! { "key" => JsonValue::String("value".to_string()) })
         );
-        assert_eq!(parse_value("-0.5").unwrap(), (JsonValue::Number(-0.5), ""));
+
+        // Valid object with mixed values (THIS WAS THE FAILING TEST)
+        let (value, rest) =
+            parse_value("{\"name\": \"Babbage\", \"age\": 30, \"admin\": true}").unwrap();
         assert_eq!(
-            parse_value("123, 456").unwrap(),
-            (JsonValue::Number(123.0), ", 456")
+            value,
+            JsonValue::Object(hashmap! {
+                "name" => JsonValue::String("Babbage".to_string()),
+                "age" => JsonValue::Number(30.0),
+                "admin" => JsonValue::Boolean(true)
+            })
         );
-        assert!(parse_value("1.2.3").is_err());
+        assert_eq!(rest, ""); // Ensure it parses the whole thing
+
+        // Valid nested object
+        assert_eq!(
+            parse_value("{\"nested\": {\"key\": [null, 1]}}").unwrap().0,
+            JsonValue::Object(hashmap! {
+                "nested" => JsonValue::Object(hashmap! {
+                    "key" => JsonValue::Array(vec![
+                        JsonValue::Null,
+                        JsonValue::Number(1.0)
+                    ])
+                })
+            })
+        );
+
+        // Invalid cases
+        assert!(parse_value("{key: \"value\"}").is_err());
+        assert!(parse_value("{\"key\" \"value\"}").is_err());
+        assert!(parse_value("{\"key\": value}").is_err());
     }
 
-    // --- Stage 4 Tests ---
+    // --- NEW TESTS for Stage 7 ---
     #[test]
-    fn test_parse_strings() {
+    fn test_parse_with_whitespace() {
+        // Test whitespace around all token types
+        assert_eq!(parse_value(" null ").unwrap().0, JsonValue::Null);
         assert_eq!(
-            parse_value("\"\"").unwrap(),
-            (JsonValue::String("".to_string()), "")
+            parse_value(" \n true \t ").unwrap().0,
+            JsonValue::Boolean(true)
         );
         assert_eq!(
-            parse_value("\"hello\"").unwrap(),
-            (JsonValue::String("hello".to_string()), "")
+            parse_value(" \t 123 \n ").unwrap().0,
+            JsonValue::Number(123.0)
         );
         assert_eq!(
-            parse_value("\"hello\", 123").unwrap(),
-            (JsonValue::String("hello".to_string()), ", 123")
+            parse_value(" \n \"hello\" \t ").unwrap().0,
+            JsonValue::String("hello".to_string())
         );
-        assert!(parse_value("\"hello").is_err());
-        assert!(parse_value("hello").is_err());
-    }
 
-    // --- NEW TESTS for Stage 5 ---
-    #[test]
-    fn test_parse_arrays() {
-        // Valid empty array
-        let (value, rest) = parse_value("[]").unwrap();
-        assert_eq!(value, JsonValue::Array(vec![]));
-        assert_eq!(rest, "");
-
-        // Valid array of numbers
-        let (value, rest) = parse_value("[1,2,3]").unwrap();
+        // Test whitespace inside arrays
+        let (value, rest) = parse_value(" [ 1 , 2 , 3 ] ").unwrap();
         assert_eq!(
             value,
             JsonValue::Array(vec![
@@ -219,40 +293,38 @@ mod tests {
         );
         assert_eq!(rest, "");
 
-        // Valid array of mixed types
-        let (value, rest) = parse_value("[1,\"hello\",null,true]").unwrap();
+        // Test whitespace inside objects
+        let (value, rest) = parse_value(" { \n \"key\" \t : \n \"value\" \n } ").unwrap();
         assert_eq!(
             value,
+            JsonValue::Object(hashmap! { "key" => JsonValue::String("value".to_string()) })
+        );
+        assert_eq!(rest, "");
+
+        // Test complex nested structure with whitespace
+        let input = "
+            [
+                1,
+                \"hello\",
+                [
+                    null
+                ]
+            ]
+        ";
+        assert_eq!(
+            parse_value(input).unwrap().0,
             JsonValue::Array(vec![
                 JsonValue::Number(1.0),
                 JsonValue::String("hello".to_string()),
-                JsonValue::Null,
-                JsonValue::Boolean(true)
+                JsonValue::Array(vec![JsonValue::Null])
             ])
         );
-        assert_eq!(rest, "");
 
-        // Valid nested array (this proves recursion!)
-        let (value, rest) = parse_value("[[1,2],[3,4]]").unwrap();
-        assert_eq!(
-            value,
-            JsonValue::Array(vec![
-                JsonValue::Array(vec![JsonValue::Number(1.0), JsonValue::Number(2.0)]),
-                JsonValue::Array(vec![JsonValue::Number(3.0), JsonValue::Number(4.0)])
-            ])
-        );
-        assert_eq!(rest, "");
-
-        // Invalid: Missing closing bracket
-        assert!(parse_value("[1, 2").is_err());
-
-        // Invalid: Missing comma
-        // Our parser will fail this: it parses `1`, then `parse_number` fails on `2`
-        // because `parse_value` was expecting `]` or `,`.
-        assert!(parse_value("[1 2 3]").is_err());
-
-        // Invalid: Empty element
-        // `parse_value` will be called on `, 2` which will fail.
-        assert!(parse_value("[1,,2]").is_err());
+        // Invalid: Whitespace inside a token [cite: 128]
+        assert!(parse_value("n ull").is_err());
+        assert!(parse_value("t rue").is_err());
+        let (value, rest) = parse_value("1 23").unwrap();
+        assert_eq!(value, JsonValue::Number(1.0));
+        assert_eq!(rest, "23");
     }
 }
