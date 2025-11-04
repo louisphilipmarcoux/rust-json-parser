@@ -3,6 +3,12 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
+// --- Constants for Stage 14 ---
+/// Default maximum nesting depth (e.g., 100)
+const DEFAULT_MAX_DEPTH: usize = 100;
+/// Maximum file size to parse (e.g., 10MB)
+const MAX_JSON_SIZE_BYTES: usize = 10 * 1024 * 1024;
+
 // --- 1. The final JSON Value Enum ---
 #[derive(Debug, PartialEq, Clone)]
 pub enum JsonValue {
@@ -105,6 +111,7 @@ impl<'a> Tokenizer<'a> {
             };
 
             let token_kind = match next_char {
+                // ... (whitespace, single-char tokens) ...
                 ' ' | '\t' | '\r' | '\n' => {
                     self.next_char();
                     continue;
@@ -138,12 +145,9 @@ impl<'a> Tokenizer<'a> {
                 'f' => self.lex_literal("false", TokenType::Boolean(false))?,
                 '"' => self.lex_string()?,
                 '-' | '0'..='9' => self.lex_number()?,
-
-                // --- NEW for Stage 13: Reject Comments ---
                 '/' => {
                     return Err(self.error("Comments are not allowed in JSON".to_string()));
                 }
-                // --- End New ---
                 _ => {
                     return Err(self.error(format!("Unexpected character '{}'", next_char)));
                 }
@@ -178,7 +182,7 @@ impl<'a> Tokenizer<'a> {
         while let Some(c) = self.next_char() {
             match c {
                 '\\' => {
-                    // ... (escape handling logic) ...
+                    // ... (escape logic) ...
                     if let Some(escaped_char) = self.next_char() {
                         match escaped_char {
                             '"' | '\\' | '/' => parsed_content.push(escaped_char),
@@ -211,13 +215,10 @@ impl<'a> Tokenizer<'a> {
                         return Err(self.error("Unterminated string".to_string()));
                     }
                 }
-                '"' => return Ok(TokenType::String(parsed_content)), // End of string
-
-                // --- NEW for Stage 13: Reject control chars ---
+                '"' => return Ok(TokenType::String(parsed_content)),
                 '\u{0000}'..='\u{001F}' => {
                     return Err(self.error("Unescaped control character in string".to_string()));
                 }
-                // --- End New ---
                 _ => parsed_content.push(c),
             }
         }
@@ -237,24 +238,17 @@ impl<'a> Tokenizer<'a> {
             }
         }
 
-        // --- NEW Validation for Stage 13 ---
-        // Reject leading zeros (e.g., "0123")
+        // ... (Stage 13 validation checks) ...
         if num_str.starts_with('0') && num_str.len() > 1 {
             if let Some(second_char) = num_str.chars().nth(1) {
                 if second_char.is_ascii_digit() {
-                    // e.g., "01", "00"
                     return Err(self.error("Invalid number: leading zeros not allowed".to_string()));
                 }
             }
         }
-
-        // Reject numbers ending in a decimal (e.g., "1.")
         if num_str.ends_with('.') {
             return Err(self.error("Invalid number: cannot end with a decimal point".to_string()));
         }
-        // --- End New ---
-
-        // (Stage 10 validation)
         if let Some(e_pos) = num_str.find(['e', 'E']) {
             if e_pos > 0 && num_str.chars().nth(e_pos - 1) == Some('.') {
                 return Err(self.error(format!("Invalid number '{}'", num_str)));
@@ -273,17 +267,23 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-// --- 5. The Parser ---
+// --- 5. The Parser (UPDATED for Stage 14) ---
 pub struct Parser<'a> {
     tokens: &'a [Token],
     position: usize,
+    // --- NEW Fields ---
+    current_depth: usize,
+    max_depth: usize,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
+    /// Updated `new` function
+    pub fn new(tokens: &'a [Token], max_depth: usize) -> Self {
         Parser {
             tokens,
             position: 0,
+            current_depth: 0,
+            max_depth,
         }
     }
 
@@ -318,6 +318,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // --- UPDATED for Stage 14: Check depth ---
     fn parse_value(&mut self) -> Result<JsonValue, ParseError> {
         let token = self.consume()?.clone();
         match token.kind {
@@ -325,8 +326,27 @@ impl<'a> Parser<'a> {
             TokenType::Boolean(b) => Ok(JsonValue::Boolean(b)),
             TokenType::Number(n) => Ok(JsonValue::Number(n)),
             TokenType::String(s) => Ok(JsonValue::String(s)),
-            TokenType::LeftBracket => self.parse_array(),
-            TokenType::LeftBrace => self.parse_object(),
+
+            TokenType::LeftBracket => {
+                // Check depth BEFORE parsing the array
+                if self.current_depth >= self.max_depth {
+                    return Err(self.error("Maximum nesting depth exceeded".to_string(), &token));
+                }
+                self.current_depth += 1;
+                let result = self.parse_array();
+                self.current_depth -= 1; // Decrement after, whether it succeeded or failed
+                result
+            }
+            TokenType::LeftBrace => {
+                // Check depth BEFORE parsing the object
+                if self.current_depth >= self.max_depth {
+                    return Err(self.error("Maximum nesting depth exceeded".to_string(), &token));
+                }
+                self.current_depth += 1;
+                let result = self.parse_object();
+                self.current_depth -= 1; // Decrement after, whether it succeeded or failed
+                result
+            }
             _ => Err(self.error(
                 format!("Expected a value, found '{:?}'", token.kind),
                 &token,
@@ -334,26 +354,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // --- UPDATED for Stage 13: Reject Trailing Commas ---
     fn parse_array(&mut self) -> Result<JsonValue, ParseError> {
         let mut elements = Vec::new();
-
         let next_token = self.peek()?;
         if next_token.kind == TokenType::RightBracket {
-            self.consume()?; // Consume ']'
+            self.consume()?;
             return Ok(JsonValue::Array(elements));
         }
 
         loop {
-            elements.push(self.parse_value()?);
-
-            let token = self.peek()?.clone(); // Peek, don't consume yet
-
+            elements.push(self.parse_value()?); // This will recursively call parse_value
+            let token = self.peek()?.clone();
             match token.kind {
                 TokenType::Comma => {
-                    self.consume()?; // Consume the comma
-
-                    // Check for trailing comma
+                    self.consume()?;
                     if self.peek()?.kind == TokenType::RightBracket {
                         return Err(
                             self.error("Trailing comma not allowed in array".to_string(), &token)
@@ -361,7 +375,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenType::RightBracket => {
-                    self.consume()?; // Consume the ']'
+                    self.consume()?;
                     break;
                 }
                 _ => {
@@ -372,13 +386,11 @@ impl<'a> Parser<'a> {
         Ok(JsonValue::Array(elements))
     }
 
-    // --- UPDATED for Stage 13: Reject Trailing Commas ---
     fn parse_object(&mut self) -> Result<JsonValue, ParseError> {
         let mut map = HashMap::new();
-
         let next_token = self.peek()?;
         if next_token.kind == TokenType::RightBrace {
-            self.consume()?; // Consume '}'
+            self.consume()?;
             return Ok(JsonValue::Object(map));
         }
 
@@ -394,17 +406,14 @@ impl<'a> Parser<'a> {
             self.expect(TokenType::Colon)?;
 
             // 3. Parse Value
-            let value = self.parse_value()?;
+            let value = self.parse_value()?; // This will recursively call parse_value
             map.insert(key, value);
 
             // 4. Expect Comma or Brace
-            let token = self.peek()?.clone(); // Peek, don't consume
-
+            let token = self.peek()?.clone();
             match token.kind {
                 TokenType::Comma => {
-                    self.consume()?; // Consume the comma
-
-                    // Check for trailing comma
+                    self.consume()?;
                     if self.peek()?.kind == TokenType::RightBrace {
                         return Err(
                             self.error("Trailing comma not allowed in object".to_string(), &token)
@@ -412,7 +421,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenType::RightBrace => {
-                    self.consume()?; // Consume the '}'
+                    self.consume()?;
                     break;
                 }
                 _ => {
@@ -454,20 +463,32 @@ impl<'a> Parser<'a> {
 
 // --- 6. Main Function ---
 fn main() {
-    let input = "[1, 2,]";
-    println!("Parsing: {}", input);
+    let input = "[".repeat(101) + &"]".repeat(101); // 101 levels deep
+    println!("Parsing: {}... (truncated)", &input[..20]);
 
-    match public_parse(input) {
+    match public_parse(&input) {
         Ok(json) => println!("Parsed: {:#?}", json),
         Err(e) => println!("{}", e),
     }
 }
 
-/// Public-facing helper function
+/// Public-facing helper function (UPDATED for Stage 14)
 pub fn public_parse(input: &str) -> Result<JsonValue, ParseError> {
+    // 1. Check max size
+    if input.len() > MAX_JSON_SIZE_BYTES {
+        return Err(ParseError {
+            message: "Input exceeds maximum size limit".to_string(),
+            line: 1,
+            column: 1,
+        });
+    }
+
+    // 2. Tokenize
     let mut tokenizer = Tokenizer::new(input);
     let tokens = tokenizer.tokenize()?;
-    let mut parser = Parser::new(&tokens);
+
+    // 3. Parse (pass in the max depth)
+    let mut parser = Parser::new(&tokens, DEFAULT_MAX_DEPTH);
     parser.parse()
 }
 
@@ -613,4 +634,33 @@ mod tests {
         assert_eq!(err.line, 2);
         assert_eq!(err.column, 1);
     }
+
+    // --- NEW TESTS for Stage 14 ---
+    #[test]
+    fn test_security_limits() {
+        // 1. Test Nesting Depth
+
+        // Generate a string with 101 levels of nesting (1 over our limit of 100)
+        let evil_input = "[".repeat(101) + &"]".repeat(101);
+
+        let err = public_parse(&evil_input).unwrap_err();
+        assert_eq!(err.message, "Maximum nesting depth exceeded");
+        assert_eq!(err.line, 1);
+        assert_eq!(err.column, 101); // The 101st '['
+
+        // Generate a string with 100 levels (exactly our limit)
+        // This should pass
+        let ok_input = "[".repeat(100) + &"]".repeat(100);
+        let result = public_parse(&ok_input);
+        assert!(result.is_ok());
+
+        // Test with objects
+        let evil_obj_input = "{ \"a\": ".repeat(101) + "null" + &"}".repeat(101);
+        let err = public_parse(&evil_obj_input).unwrap_err();
+        assert_eq!(err.message, "Maximum nesting depth exceeded");
+    }
+
+    // We don't add a test for MAX_JSON_SIZE_BYTES because
+    // it's not practical to create a 10MB string in a unit test.
+    // We trust the simple `input.len()` check.
 }
