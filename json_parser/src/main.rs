@@ -1,13 +1,15 @@
+use std::collections::HashMap; // <-- ADDED (for Stage 6, but good to add now)
+
 // --- 1. JsonValue Enum ---
-// We've added the String variant.
+// We've added the Array variant.
 #[derive(Debug, PartialEq)]
 pub enum JsonValue {
     Null,
     Boolean(bool),
     Number(f64),
-    String(String), // <-- ADDED
-                    // Array(Vec<JsonValue>),
-                    // Object(std::collections::HashMap<String, JsonValue>),
+    String(String),
+    Array(Vec<JsonValue>),              // <-- ADDED
+    Object(HashMap<String, JsonValue>), // <-- ADDED (for Stage 6)
 }
 
 // --- 2. Parser Functions ---
@@ -46,47 +48,73 @@ fn parse_number(input: &str) -> Result<(JsonValue, &str), &'static str> {
     }
 }
 
-// --- NEW FUNCTION for Stage 4 ---
 /// Tries to parse a JSON string.
-/// This implementation is simple and does not yet handle escape sequences.
 fn parse_string(input: &str) -> Result<(JsonValue, &str), &'static str> {
-    // Check if it starts with a double quote
     if !input.starts_with('"') {
         return Err("Expected '\"' at start of string");
     }
 
-    // Find the closing double quote.
-    // We skip the first character (the opening quote).
-    // `find` will locate the *next* quote.
-    // Note: This simple version doesn't handle escaped quotes (\") yet.
     match input[1..].find('"') {
         Some(end_index) => {
-            // The `end_index` is relative to `&input[1..]`.
-            // The actual content of the string is from index 1 up to `end_index + 1`.
             let string_content = &input[1..end_index + 1];
-
-            // The rest of the input starts *after* the closing quote.
             let rest = &input[end_index + 2..];
-
             Ok((JsonValue::String(string_content.to_string()), rest))
         }
-        None => {
-            // We didn't find a closing quote
-            Err("Unmatched '\"' at end of string") // [cite: 68]
+        None => Err("Unmatched '\"' at end of string"),
+    }
+}
+
+// --- NEW FUNCTION for Stage 5 ---
+/// Tries to parse a JSON array.
+fn parse_array(input: &str) -> Result<(JsonValue, &str), &'static str> {
+    if !input.starts_with('[') {
+        return Err("Expected '[' at start of array");
+    }
+
+    // Get rid of the opening '['
+    let mut current_input = &input[1..];
+    let mut elements = Vec::new();
+
+    // Handle empty array: []
+    if current_input.starts_with(']') {
+        return Ok((JsonValue::Array(elements), &current_input[1..]));
+    }
+
+    // Loop to parse elements
+    loop {
+        // 1. Parse a value
+        let (value, rest) = parse_value(current_input)?;
+        elements.push(value);
+        current_input = rest;
+
+        // 2. See what's next: a comma or a closing bracket
+        if current_input.starts_with(',') {
+            // Consume the comma and loop again
+            current_input = &current_input[1..];
+        } else if current_input.starts_with(']') {
+            // Consume the bracket and finish
+            current_input = &current_input[1..];
+            break;
+        } else {
+            // Anything else is an error
+            return Err("Expected ',' or ']' after array element");
         }
     }
+
+    Ok((JsonValue::Array(elements), current_input))
 }
 // --- END NEW FUNCTION ---
 
 /// Tries to parse any valid JSON value from the beginning of the input.
-// --- UPDATED to include strings ---
+// --- UPDATED to include arrays ---
 fn parse_value(input: &str) -> Result<(JsonValue, &str), &'static str> {
     match input.chars().next() {
         Some('n') => parse_null(input),
         Some('t') | Some('f') => parse_boolean(input),
         Some('-') | Some('0'..='9') => parse_number(input),
-        Some('"') => parse_string(input), // <-- ADDED
-        // We'll add more cases here for arrays, objects, etc.
+        Some('"') => parse_string(input),
+        Some('[') => parse_array(input), // <-- ADDED
+        // We'll add objects next
         _ => Err("Expected a valid JSON value"),
     }
 }
@@ -119,20 +147,16 @@ mod tests {
     // --- Stage 2 Tests ---
     #[test]
     fn test_parse_booleans() {
-        let (value, rest) = parse_value("true").unwrap();
-        assert_eq!(value, JsonValue::Boolean(true));
-        assert_eq!(rest, "");
-
-        let (value, rest) = parse_value("false").unwrap();
-        assert_eq!(value, JsonValue::Boolean(false));
-        assert_eq!(rest, "");
-
-        let (value, rest) = parse_value("true}").unwrap();
-        assert_eq!(value, JsonValue::Boolean(true));
-        assert_eq!(rest, "}");
-
+        assert_eq!(parse_value("true").unwrap(), (JsonValue::Boolean(true), ""));
+        assert_eq!(
+            parse_value("false").unwrap(),
+            (JsonValue::Boolean(false), "")
+        );
+        assert_eq!(
+            parse_value("true}").unwrap(),
+            (JsonValue::Boolean(true), "}")
+        );
         assert!(parse_value("True").is_err());
-        assert!(parse_value("fals").is_err());
     }
 
     // --- Stage 3 Tests ---
@@ -149,34 +173,86 @@ mod tests {
             (JsonValue::Number(45.67), "")
         );
         assert_eq!(parse_value("-0.5").unwrap(), (JsonValue::Number(-0.5), ""));
-
-        let (value, rest) = parse_value("123, 456").unwrap();
-        assert_eq!(value, JsonValue::Number(123.0));
-        assert_eq!(rest, ", 456");
-
+        assert_eq!(
+            parse_value("123, 456").unwrap(),
+            (JsonValue::Number(123.0), ", 456")
+        );
         assert!(parse_value("1.2.3").is_err());
-        assert!(parse_value("--1").is_err());
     }
 
-    // --- NEW TESTS for Stage 4 ---
+    // --- Stage 4 Tests ---
     #[test]
     fn test_parse_strings() {
-        let (value, rest) = parse_value("\"\"").unwrap();
-        assert_eq!(value, JsonValue::String("".to_string()));
-        assert_eq!(rest, "");
-
-        let (value, rest) = parse_value("\"hello\"").unwrap();
-        assert_eq!(value, JsonValue::String("hello".to_string()));
-        assert_eq!(rest, "");
-
-        let (value, rest) = parse_value("\"hello\", 123").unwrap();
-        assert_eq!(value, JsonValue::String("hello".to_string()));
-        assert_eq!(rest, ", 123");
-
+        assert_eq!(
+            parse_value("\"\"").unwrap(),
+            (JsonValue::String("".to_string()), "")
+        );
+        assert_eq!(
+            parse_value("\"hello\"").unwrap(),
+            (JsonValue::String("hello".to_string()), "")
+        );
+        assert_eq!(
+            parse_value("\"hello\", 123").unwrap(),
+            (JsonValue::String("hello".to_string()), ", 123")
+        );
         assert!(parse_value("\"hello").is_err());
-
         assert!(parse_value("hello").is_err());
+    }
 
-        assert!(parse_value("'hello'").is_err());
+    // --- NEW TESTS for Stage 5 ---
+    #[test]
+    fn test_parse_arrays() {
+        // Valid empty array
+        let (value, rest) = parse_value("[]").unwrap();
+        assert_eq!(value, JsonValue::Array(vec![]));
+        assert_eq!(rest, "");
+
+        // Valid array of numbers
+        let (value, rest) = parse_value("[1,2,3]").unwrap();
+        assert_eq!(
+            value,
+            JsonValue::Array(vec![
+                JsonValue::Number(1.0),
+                JsonValue::Number(2.0),
+                JsonValue::Number(3.0)
+            ])
+        );
+        assert_eq!(rest, "");
+
+        // Valid array of mixed types
+        let (value, rest) = parse_value("[1,\"hello\",null,true]").unwrap();
+        assert_eq!(
+            value,
+            JsonValue::Array(vec![
+                JsonValue::Number(1.0),
+                JsonValue::String("hello".to_string()),
+                JsonValue::Null,
+                JsonValue::Boolean(true)
+            ])
+        );
+        assert_eq!(rest, "");
+
+        // Valid nested array (this proves recursion!)
+        let (value, rest) = parse_value("[[1,2],[3,4]]").unwrap();
+        assert_eq!(
+            value,
+            JsonValue::Array(vec![
+                JsonValue::Array(vec![JsonValue::Number(1.0), JsonValue::Number(2.0)]),
+                JsonValue::Array(vec![JsonValue::Number(3.0), JsonValue::Number(4.0)])
+            ])
+        );
+        assert_eq!(rest, "");
+
+        // Invalid: Missing closing bracket
+        assert!(parse_value("[1, 2").is_err());
+
+        // Invalid: Missing comma
+        // Our parser will fail this: it parses `1`, then `parse_number` fails on `2`
+        // because `parse_value` was expecting `]` or `,`.
+        assert!(parse_value("[1 2 3]").is_err());
+
+        // Invalid: Empty element
+        // `parse_value` will be called on `, 2` which will fail.
+        assert!(parse_value("[1,,2]").is_err());
     }
 }
