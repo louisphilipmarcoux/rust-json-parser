@@ -9,7 +9,7 @@ fn main() {
 
     // Call the library function
     match parse_streaming(input) {
-        Ok(mut parser) => {
+        Ok(parser) => {
             for event in parser {
                 match event {
                     Ok(event) => println!("Event: {:?}", event),
