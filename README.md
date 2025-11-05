@@ -4,7 +4,7 @@ A fast, 100% safe, and RFC 8259-compliant streaming JSON parser and serializer, 
 
 rill-json is designed for performance and safety. It provides a low-memory, event-based streaming parser and a convenient serializer to convert Rust's native HashMaps and Vecs back into JSON strings.
 
-### **Key Features**
+## **Key Features**
 
 * **100% Safe Rust:** Contains no unsafe code.  
 * **Streaming Parser:** An Iterator that emits ParserEvents, ideal for parsing large files with minimal memory.  
@@ -16,43 +16,42 @@ rill-json is designed for performance and safety. It provides a low-memory, even
 
 Add rill-json to your Cargo.toml:
 
-
-    \[dependencies\]  
-    rill-json \= "0.1.0" \# Check crates.io for the latest version
+    [dependencies]  
+    rill-json = "0.1.0" # Check crates.io for the latest version
 
 ### **1\. Parsing JSON (Streaming)**
 
 The parse\_streaming function is the primary entry point. It returns an iterator that you can loop over. This is the most memory-efficient way to parse JSON.
 
-    use rill\_json::{parse\_streaming, ParserEvent};
+    use rill_json::{parse_streaming, ParserEvent};
 
     fn main() {  
-        let json\_data \= r\#"  
+        let json_data = r#"  
             {  
                 "id": 123,  
                 "name": "Babbage",  
                 "active": true  
             }  
-        "\#;
+        "#;
 
-        let mut parser \= parse\_streaming(json\_data).unwrap();  
-        let mut found\_name\_key \= false;
+        let mut parser = parse_streaming(json_data).unwrap();  
+        let mut found_name_key = false;
 
         // Loop over all events  
-        while let Some(event) \= parser.next() {  
+        while let Some(event) = parser.next() {  
             match event.unwrap() {  
                 // We found a key...  
-                ParserEvent::Key(key) if key \== "name" \=\> {  
-                    found\_name\_key \= true;  
+                ParserEvent::Key(key) if key == "name" => {  
+                    found_name_key = true;  
                 }  
-                // ...so the \*next\* string event is the value we want.  
-                ParserEvent::String(value) if found\_name\_key \=\> {  
-                    println\!("Found name: {}", value);  
+                // ...so the *next* string event is the value we want.  
+                ParserEvent::String(value) if found_name_key => {  
+                    println!("Found name: {}", value);  
                     break; // Stop parsing  
                 }  
                 // Reset if we see other values before finding the one we want  
-                \_ \=\> {  
-                    found\_name\_key \= false;  
+                _ => {  
+                    found_name_key = false;  
                 }  
             }  
         }  
@@ -62,44 +61,44 @@ The parse\_streaming function is the primary entry point. It returns an iterator
 
 You can also use rill-json to create JSON strings from your own Rust data using the JsonValue enum.
 
-    use rill\_json::JsonValue;  
+    use rill_json::JsonValue;  
     use std::collections::HashMap;
 
     fn main() {  
-        // 1\. Create native Rust data  
-        let mut user\_data \= HashMap::new();  
-        user\_data.insert(  
-            "username".to\_string(),  
-            JsonValue::String("ada\_l".to\_string())  
+        // 1. Create native Rust data  
+        let mut user_data = HashMap::new();  
+        user_data.insert(  
+            "username".to_string(),  
+            JsonValue::String("ada_l".to_string())  
         );  
-        user\_data.insert(  
-            "id".to\_string(),  
+        user_data.insert(  
+            "id".to_string(),  
             JsonValue::Number(1815.0)  
         );  
-        user\_data.insert(  
-            "projects".to\_string(),  
-            JsonValue::Array(vec\!\[  
-                JsonValue::String("Analytical Engine".to\_string()),  
-                JsonValue::String("Difference Engine".to\_string())  
-            \])  
+        user_data.insert(  
+            "projects".to_string(),  
+            JsonValue::Array(vec![  
+                JsonValue::String("Analytical Engine".to_string()),  
+                JsonValue::String("Difference Engine".to_string())  
+            ])  
         );  
-        user\_data.insert(  
-            "active".to\_string(),  
+        user_data.insert(  
+            "active".to_string(),  
             JsonValue::Boolean(false)  
         );
 
-        // 2\. Wrap it in the JsonValue::Object variant  
-        let json\_object \= JsonValue::Object(user\_data);
+        // 2. Wrap it in the JsonValue::Object variant  
+        let json_object = JsonValue::Object(user_data);
 
-        // 3\. Stringify it\!  
+        // 3. Stringify it!  
         
         // Compact version (machine-readable)  
-        let compact\_string \= json\_object.stringify();  
-        println\!("--- Compact \---\\n{}", compact\_string);  
+        let compact_string = json_object.stringify();  
+        println!("--- Compact ---\n{}", compact_string);  
         
         // Pretty version (human-readable)  
-        let pretty\_string \= json\_object.stringify\_pretty();  
-        println\!("\\n--- Pretty \---\\n{}", pretty\_string);  
+        let pretty_string \= json_object.stringify_pretty();  
+        println!("\n--- Pretty ---\n{}", pretty_string);  
     }
 
 ### **License**
