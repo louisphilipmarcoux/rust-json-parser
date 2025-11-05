@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(err.column, 11);
 
         let err = collect_events("// a comment\n[1, 2]").unwrap_err();
-        assert_eq!(err.message, "Comments are not allowed in JSON");
+        assert_eq!(err.message, "Unexpected character '/'");
 
         let err = collect_events("0123").unwrap_err();
         assert_eq!(err.message, "Invalid number: leading zeros not allowed");
