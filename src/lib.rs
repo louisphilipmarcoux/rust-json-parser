@@ -22,7 +22,7 @@
 //! The `parse_streaming` function is the primary entry point. It's the most
 //! efficient way to parse JSON, especially large files.
 //!
-//! ```no_run
+//! no_run
 //! use rill_json::{parse_streaming, ParserEvent};
 //!
 //! fn main() {
@@ -43,9 +43,9 @@
 //! }
 //! ```
 //!
-//! ## Quick Start: Serializing
+//! // ## Quick Start: Serializing
 //!
-//! You can also create JSON strings from your own Rust data using the `JsonValue` enum.
+//! // You can also create JSON strings from your own Rust data using the `JsonValue` enum.
 //!
 //! ```no_run
 //! use rill_json::JsonValue;
