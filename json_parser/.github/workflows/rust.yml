@@ -3,9 +3,9 @@ name: Rust CI
 # Run on pushes and pull requests to the main branch
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,11 +35,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
+        working-directory: ./json_parser
         run: cargo fmt --all -- --check
 
       - name: Run Clippy (linter)
         # Fail the build if there are any warnings
+        working-directory: ./json_parser
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
+        working-directory: ./json_parser
         run: cargo test --verbose
