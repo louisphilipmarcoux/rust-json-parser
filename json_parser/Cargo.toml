@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Louis-Philip Marcoux <louisphilipmarcoux@gmail.com>"]
 
-# This description is what users see on crates.io.
+# This description is what users see on crates.io
 description = "A fast, 100% safe, and RFC 8259-compliant streaming JSON parser and serializer, built from scratch in Rust."
 
 # The link to this README file.
