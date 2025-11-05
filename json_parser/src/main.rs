@@ -1,8 +1,6 @@
 // In your new src/main.rs
 
-// Use the library crate. The name "json_parser" comes from
-// your Cargo.toml [package] name.
-use json_parser::{parse_streaming, JsonValue}; 
+use rill_json::{parse_streaming, JsonValue};
 use std::collections::HashMap;
 
 fn main() {

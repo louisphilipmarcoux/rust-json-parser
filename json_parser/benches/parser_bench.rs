@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use json_parser::{parse_streaming, JsonValue}; // Your library
+use rill_json::{parse_streaming, JsonValue}; // Your library
 use serde_json::Value; // The standard library's JSON value
 use std::collections::HashMap;
 

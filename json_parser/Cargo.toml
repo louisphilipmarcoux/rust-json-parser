@@ -1,26 +1,51 @@
 [package]
-name = "json_parser" # Or whatever your package name is
+name = "rill-json"
 version = "0.1.0"
 edition = "2021"
+authors = ["Louis-Philip Marcoux <louisphilipmarcoux@gmail.com>"]
 
-# This section defines the library
+# This description is what users see on crates.io.
+description = "A fast, 100% safe, and RFC 8259-compliant streaming JSON parser and serializer, built from scratch in Rust."
+
+# The link to this README file.
+readme = "README.md"
+
+# The link to your GitHub repository.
+repository = "https://github.com/louisphilipmarcoux/rill-json"
+
+# The license is essential for a public crate.
+license = "MIT OR Apache-2.0"
+
+# Keywords help people find your crate.
+keywords = ["json", "parser", "streaming", "serializer", "no_unsafe"]
+
+# Categories help people browse for your crate.
+categories = ["parser", "encoding"]
+
+
+# Your library target
 [lib]
-name = "json_parser"
+name = "rill_json" # The name for `use rill_json`
 path = "src/lib.rs"
 
-# This section defines the binary
+# Your binary target (for demonstration)
 [[bin]]
-name = "json_parser_bin" # A different name for the binary executable
+name = "rill_json_bin"
 path = "src/main.rs"
 
+
 [dependencies]
+# Your parser's only dependency!
 memchr = "2.7.4"
 
+
+# Dependencies for testing, benchmarking, and fuzzing
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Configuration for benchmarks
 [[bench]]
 name = "parser_bench"
 harness = false
