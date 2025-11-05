@@ -20,7 +20,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["json", "parser", "streaming", "serializer", "no_unsafe"]
 
 # Categories help people browse for your crate.
-categories = ["parser", "encoding"]
+categories = ["parsing", "encoding"]
 
 
 # Your library target
