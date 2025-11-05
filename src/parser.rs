@@ -20,6 +20,7 @@ pub enum ParserEvent {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum ParserState {
     ExpectValue,
     ExpectArrayFirstValueOrEnd, // After '[' - expect value or ']' (empty array)
