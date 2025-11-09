@@ -6,7 +6,9 @@
 
 use crate::error::ParseError;
 use crate::token::{Token, TokenType};
+use crate::value::JsonNumber;
 use memchr::memchr;
+use std::borrow::Cow;
 use std::str;
 
 // --- The Lookup Table (LUT) ---
@@ -61,9 +63,6 @@ static BYTE_PROPERTIES: [u8; 256] = {
 };
 
 const IS_WHITESPACE: u8 = 1;
-
-// --- 4. Tokenizer ---
-
 /// The internal tokenizer (lexer).
 ///
 /// It operates on raw bytes (`&[u8]`) for performance, using a lookup
@@ -157,8 +156,8 @@ impl<'a> Tokenizer<'a> {
     fn lex_literal(
         &mut self,
         expected: &'static [u8],
-        kind: TokenType,
-    ) -> Result<TokenType, ParseError> {
+        kind: TokenType<'a>,
+    ) -> Result<TokenType<'a>, ParseError> {
         let end = self.cursor + expected.len();
         if self.get_slice(self.cursor..end) == Some(expected) {
             self.advance_by(expected.len());
@@ -171,18 +170,46 @@ impl<'a> Tokenizer<'a> {
 
     /// Parses a JSON string, handling escapes.
     /// Uses `memchr` for "safe SIMD" acceleration.
-    fn lex_string(&mut self) -> Result<TokenType, ParseError> {
+    fn lex_string(&mut self) -> Result<TokenType<'a>, ParseError> {
         self.advance_byte(); // Consume opening '"'
 
         let string_start_cursor = self.cursor;
         let mut s: String; // Will hold our final string if it has escapes.
 
-        // --- "Hot" path ---
-        // 1. Scan for the *closing quote*. This is the common case.
-        let slice = &self.bytes[self.cursor..];
-        let quote_index = match memchr(b'"', slice) {
-            Some(i) => i,
-            None => return Err(self.error("Unterminated string".to_string())),
+        // --- "Hot" path (find closing quote, handling escapes) ---
+        // 1. Scan for the *closing quote*, correctly handling escaped quotes.
+        let mut current_slice = &self.bytes[self.cursor..];
+        let mut total_offset = 0; // Offset from self.cursor
+
+        let quote_index = loop {
+            match memchr(b'"', current_slice) {
+                Some(i) => {
+                    // We found a quote. Check if it's escaped.
+                    // Count the number of preceding backslashes.
+                    let mut backslashes = 0;
+                    let mut pos = i;
+                    while pos > 0 {
+                        if current_slice.get(pos - 1) == Some(&b'\\') {
+                            backslashes += 1;
+                            pos -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if backslashes % 2 == 0 {
+                        // Even number of backslashes (or zero).
+                        // This is the real closing quote.
+                        break total_offset + i;
+                    } else {
+                        // Odd number of backslashes.
+                        // This quote is escaped. Continue searching *after* it.
+                        total_offset += i + 1;
+                        current_slice = &current_slice[i + 1..];
+                    }
+                }
+                None => return Err(self.error("Unterminated string".to_string())),
+            }
         };
 
         // 2. Get the slice of *just* the string's content.
@@ -247,7 +274,7 @@ impl<'a> Tokenizer<'a> {
             }
             // After the loop, we're at the closing quote.
             self.advance_byte(); // Consume the quote
-            Ok(TokenType::String(s))
+            Ok(TokenType::String(Cow::Owned(s))) // Return Cow::Owned for the escaped string.
         } else {
             // --- "Hot" path (no escapes) ---
             // This is the fastest path.
@@ -267,12 +294,12 @@ impl<'a> Tokenizer<'a> {
 
             // We're at the closing quote. Consume it.
             self.advance_byte();
-            Ok(TokenType::String(s_str.to_string()))
+            Ok(TokenType::String(Cow::Borrowed(s_str))) // Return Cow::Borrowed for the zero-copy unescaped string.
         }
     }
 
-    /// Parses a JSON number.
-    fn lex_number(&mut self) -> Result<TokenType, ParseError> {
+    /// Parses a JSON number, handling i64, u64, and f64.
+    fn lex_number(&mut self) -> Result<TokenType<'a>, ParseError> {
         let start = self.cursor;
 
         // Greedily consume all valid number characters.
@@ -296,8 +323,11 @@ impl<'a> Tokenizer<'a> {
             return Err(self.error("Expected a number".to_string()));
         }
 
-        // This is safe because we only advanced over ASCII bytes
-        let num_str = unsafe { str::from_utf8_unchecked(&self.bytes[start..end]) };
+        // This is 100% safe. The slice only contains ASCII number chars,
+        // so this will never fail, but we use the safe version to
+        // uphold the #![forbid(unsafe_code)] guarantee.
+        let num_str = str::from_utf8(&self.bytes[start..end])
+            .expect("Internal error: non-UTF8 in number slice");
 
         // --- RFC 8259 Validation ---
         if num_str.starts_with('0') && num_str.len() > 1 {
@@ -324,16 +354,28 @@ impl<'a> Tokenizer<'a> {
         }
         // --- End validation ---
 
-        match num_str.parse::<f64>() {
-            Ok(num) => Ok(TokenType::Number(num)),
-            Err(_) => Err(self.error(format!("Invalid number '{}'", num_str))),
+        // Try parsing as integer first, then fall back to float.
+        if num_str.contains(['.', 'e', 'E']) {
+            // It's a float
+            match num_str.parse::<f64>() {
+                Ok(num) => Ok(TokenType::Number(JsonNumber::F64(num))),
+                Err(_) => Err(self.error(format!("Invalid number '{}'", num_str))),
+            }
+        } else {
+            // Try i64, then u64
+            match num_str.parse::<i64>() {
+                Ok(num) => Ok(TokenType::Number(JsonNumber::I64(num))),
+                Err(_) => match num_str.parse::<u64>() {
+                    Ok(num) => Ok(TokenType::Number(JsonNumber::U64(num))),
+                    Err(_) => Err(self.error(format!("Invalid integer '{}'", num_str))),
+                },
+            }
         }
     }
 }
 
-// --- NEW Iterator implementation ---
 impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Result<Token, ParseError>;
+    type Item = Result<Token<'a>, ParseError>;
 
     /// Gets the next `Token` from the input stream.
     fn next(&mut self) -> Option<Self::Item> {
@@ -391,5 +433,134 @@ impl<'a> Iterator for Tokenizer<'a> {
         });
 
         Some(token_result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to collect tokens into just their types for easy comparison
+    fn collect_token_types(input: &str) -> Result<Vec<TokenType<'_>>, ParseError> {
+        let tokenizer = Tokenizer::new(input);
+        tokenizer.map(|res| res.map(|token| token.kind)).collect()
+    }
+
+    #[test]
+    fn test_tokenizer_structurals() {
+        let input = "{}[]:,";
+        let expected = vec![
+            TokenType::LeftBrace,
+            TokenType::RightBrace,
+            TokenType::LeftBracket,
+            TokenType::RightBracket,
+            TokenType::Colon,
+            TokenType::Comma,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_literals() {
+        let input = "true false null";
+        let expected = vec![
+            TokenType::Boolean(true),
+            TokenType::Boolean(false),
+            TokenType::Null,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_numbers() {
+        let input = "123 -0.5 1e10 9007199254740993 9223372036854775808 -10";
+        let expected = vec![
+            TokenType::Number(JsonNumber::I64(123)),
+            TokenType::Number(JsonNumber::F64(-0.5)),
+            TokenType::Number(JsonNumber::F64(10000000000.0)),
+            TokenType::Number(JsonNumber::I64(9007199254740993)),
+            TokenType::Number(JsonNumber::U64(9223372036854775808)),
+            TokenType::Number(JsonNumber::I64(-10)),
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_strings() {
+        let input = r#" "hello" "a\nb" "\u1234" "\"" "#;
+        let expected = vec![
+            TokenType::String(Cow::Borrowed("hello")),
+            TokenType::String(Cow::Owned("a\nb".to_string())),
+            TokenType::String(Cow::Owned("\u{1234}".to_string())),
+            TokenType::String(Cow::Owned("\"".to_string())),
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_all_escapes() {
+        let input = r#""\" \\ \/ \b \f \n \r \t""#;
+        let expected = vec![TokenType::String(Cow::Owned(
+            "\" \\ / \u{0008} \u{000C} \n \r \t".to_string(),
+        ))];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_whitespace_skipping() {
+        let input = "  { \n \t \"key\" \r\n : \n 123 \n } \n ";
+        let expected = vec![
+            TokenType::LeftBrace,
+            TokenType::String(Cow::Borrowed("key")),
+            TokenType::Colon,
+            TokenType::Number(JsonNumber::I64(123)),
+            TokenType::RightBrace,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_string_errors() {
+        // Unterminated string
+        let input = r#" "hello "#;
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unterminated string");
+
+        // Unescaped control char
+        let input = "\"\n\"";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unescaped control character in string");
+
+        // Invalid escape
+        let input = r#" "\z" "#;
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Invalid escape sequence");
+    }
+
+    #[test]
+    fn test_tokenizer_number_errors() {
+        // Leading zero
+        let input = "0123";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Invalid number: leading zeros not allowed");
+
+        // Trailing decimal
+        let input = "123.";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(
+            err.message,
+            "Invalid number: cannot end with a decimal point"
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_invalid_char() {
+        let input = "?";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unexpected character '?'");
+
+        let input = "[1, 2, &]";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unexpected character '&'");
     }
 }

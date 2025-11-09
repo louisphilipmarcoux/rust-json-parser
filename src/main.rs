@@ -5,8 +5,8 @@
 //!
 //! You can run this example with: `cargo run`
 
-use rill_json::{parse_streaming, JsonValue};
-use std::collections::HashMap;
+use rill_json::{parse_streaming, JsonNumber, JsonValue};
+use std::collections::BTreeMap;
 
 fn main() {
     let input = "{ \"key\": [1, true, null] }";
@@ -33,16 +33,42 @@ fn main() {
     println!("\n--- Running Stringify Demo ---");
 
     // 1. Build a native Rust data structure
-    let mut items = HashMap::new();
+    let mut items = BTreeMap::new();
     items.insert("key".to_string(), JsonValue::String("value".to_string()));
     items.insert(
         "items".to_string(),
-        JsonValue::Array(vec![JsonValue::Number(1.0), JsonValue::Null]),
+        JsonValue::Array(vec![JsonValue::Number(JsonNumber::I64(1)), JsonValue::Null]),
     );
     let obj = JsonValue::Object(items);
     println!("Serializing: {:?}", obj);
 
     // 2. Call the library functions to serialize it
-    println!("Compact: {}", obj.stringify());
-    println!("Pretty:\n{}", obj.stringify_pretty());
+    match obj.stringify() {
+        Ok(compact) => println!("Compact: {}", compact),
+        Err(e) => println!("Compact Error: {}", e),
+    }
+    match obj.stringify_pretty() {
+        Ok(pretty) => println!("Pretty:\n{}", pretty),
+        Err(e) => println!("Pretty Error: {}", e),
+    }
+
+    println!("\n--- Running JsonValue::parse Demo ---");
+    let input_to_parse = r#"
+    {
+        "user_id": 9007199254740993,
+        "username": "big_int_user",
+        "active": true,
+        "nested": { "values": [1.5, null] }
+    }
+    "#;
+    println!("Parsing input string:\n{}", input_to_parse);
+    match JsonValue::parse(input_to_parse) {
+        Ok(parsed_value) => {
+            println!("Parsed Value: {:?}", parsed_value);
+            // Now stringify it pretty
+            println!("--- Pretty Output ---");
+            println!("{}", parsed_value.stringify_pretty().unwrap());
+        }
+        Err(e) => println!("Parse Error: {}", e),
+    }
 }

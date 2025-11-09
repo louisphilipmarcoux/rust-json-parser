@@ -26,3 +26,22 @@ impl fmt::Display for ParseError {
         )
     }
 }
+
+// --- Unit Tests ---
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        let error = ParseError {
+            message: "Unexpected ']'".to_string(),
+            line: 10,
+            column: 5,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Error: Unexpected ']' at line 10, column 5."
+        );
+    }
+}
