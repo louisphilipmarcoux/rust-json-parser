@@ -27,21 +27,18 @@
 //! ```no_run
 //! use rill_json::{parse_streaming, ParserEvent};
 //!
-//! #[allow(clippy::needless_doctest_main)]
-//! fn main() {
-//!     let json_data = r#"{ "name": "Babbage", "id": 1815 }"#;
-//!     let mut parser = parse_streaming(json_data).unwrap();
-//!     let mut found_name_key = false;
+//! let json_data = r#"{ "name": "Babbage", "id": 1815 }"#;
+//! let mut parser = parse_streaming(json_data).unwrap();
+//! let mut found_name_key = false;
 //!
-//!     while let Some(event) = parser.next() {
-//!         match event.unwrap() {
-//!             ParserEvent::Key(key) if key == "name" => found_name_key = true,
-//!             ParserEvent::String(value) if found_name_key => {
-//!                 println!("Found name: {}", value);
-//!                 break;
-//!             }
-//!             _ => found_name_key = false,
+//! while let Some(event) = parser.next() {
+//!     match event.unwrap() {
+//!         ParserEvent::Key(key) if key == "name" => found_name_key = true,
+//!         ParserEvent::String(value) if found_name_key => {
+//!             println!("Found name: {}", value);
+//!             break;
 //!         }
+//!         _ => found_name_key = false,
 //!     }
 //! }
 //! ```
