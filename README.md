@@ -8,7 +8,7 @@
 
 A fast, 100% safe, and RFC 8259-compliant streaming JSON parser and serializer, built from scratch in Rust.
 
-rill-json is designed for performance, correctness and safety. It provides a low-memory, event-based in-memory 'JsonValue' enum, and a serializer to convert your Rust data back into JSON strings.
+rill-json is designed for performance, correctness and safety. It provides a low-memory, event-based in-memory `JsonValue' enum, and a serializer to convert your Rust data back into JSON strings.
 
 ## **Key Features**
 
