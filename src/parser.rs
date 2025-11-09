@@ -139,15 +139,15 @@ impl<'a> Iterator for StreamingParser<'a> {
 
                     // Return a more specific error message based on the parser's state
                     let msg = match state {
-                        ParserState::ExpectObjectCommaOrEnd | 
-                        ParserState::ExpectObjectFirstKeyOrEnd |
-                        ParserState::ExpectObjectKey |
-                        ParserState::ExpectObjectColon |
-                        ParserState::ExpectObjectValue => "Unclosed object",
-                        ParserState::ExpectArrayCommaOrEnd |
-                        ParserState::ExpectArrayFirstValueOrEnd |
-                        ParserState::ExpectArrayValue => "Unclosed array",
-                        _ => "Unexpected end of input, unclosed structure"
+                        ParserState::ExpectObjectCommaOrEnd
+                        | ParserState::ExpectObjectFirstKeyOrEnd
+                        | ParserState::ExpectObjectKey
+                        | ParserState::ExpectObjectColon
+                        | ParserState::ExpectObjectValue => "Unclosed object",
+                        ParserState::ExpectArrayCommaOrEnd
+                        | ParserState::ExpectArrayFirstValueOrEnd
+                        | ParserState::ExpectArrayValue => "Unclosed array",
+                        _ => "Unexpected end of input, unclosed structure",
                     };
 
                     return Some(Err(ParseError {
