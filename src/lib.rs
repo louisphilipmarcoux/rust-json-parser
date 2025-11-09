@@ -27,7 +27,6 @@
 //! ```no_run
 //! use rill_json::{parse_streaming, ParserEvent};
 //! #[allow(clippy::needless_doctest_main)]
-//!
 //! fn main() {
 //!     let json_data = r#"{ "name": "Babbage", "id": 1815 }"#;
 //!     let mut parser = parse_streaming(json_data).unwrap();
