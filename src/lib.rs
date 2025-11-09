@@ -63,9 +63,9 @@
 //! assert_eq!(parsed, expected_val);
 //! ```
 //!
-//! // ## Quick Start: Serializing
+//! ## Quick Start: Serializing
 //!
-//! // You can also create JSON strings from your own Rust data using the `JsonValue` enum.
+//! You can also create JSON strings from your own Rust data using the `JsonValue` enum.
 //!
 //! ```no_run
 //! use rill_json::{JsonValue, JsonNumber};
@@ -147,8 +147,6 @@ pub fn parse_streaming<'a>(input: &'a str) -> Result<StreamingParser<'a>, ParseE
     Ok(StreamingParser::new(input, DEFAULT_MAX_DEPTH))
 }
 
-// --- 10. Test Module ---
-// The tests all stay in lib.rs, but we update the `use` statements.
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -365,10 +363,8 @@ mod tests {
         assert!(err.is_ok());
     }
 
-    // --- Stage 16 Tests ---
-
     #[test]
-    fn test_stringify_stage_16_examples() {
+    fn test_stringify_basic() {
         // Input: A native map {"key": "value", "items": [1, None]}
         // Output: The string {"items":[1,null],"key":"value"}
         let mut items = BTreeMap::new();
@@ -403,7 +399,6 @@ mod tests {
 
     #[test]
     fn test_stringify_all_types() {
-        // Primitives
         assert_eq!(JsonValue::Null.stringify().unwrap(), "null");
         assert_eq!(JsonValue::Boolean(true).stringify().unwrap(), "true");
         assert_eq!(JsonValue::Boolean(false).stringify().unwrap(), "false");
@@ -528,7 +523,6 @@ mod tests {
         assert_eq!(JsonValue::Array(vec![]).stringify_pretty().unwrap(), "[]");
     }
 
-    // --- NEW: Tests for Fix 1 (NaN/inf) ---
     #[test]
     fn test_stringify_nan_inf() {
         let val_nan = JsonValue::Number(JsonNumber::F64(f64::NAN));
@@ -545,7 +539,6 @@ mod tests {
         assert!(val_inf.stringify_pretty().is_err());
     }
 
-    // --- NEW: Tests for Fix 3 (JsonValue::parse) ---
     #[test]
     fn test_value_parse_simple() {
         let input = r#"{ "key": [1, null, true, "hello"] }"#;

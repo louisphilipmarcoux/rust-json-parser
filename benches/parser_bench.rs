@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rill_json::{parse_streaming, JsonNumber, JsonValue}; // Your library
 use serde_json::Value; // The standard library's JSON value
-use std::collections::BTreeMap; // --- FIX: Use BTreeMap ---
+use std::collections::BTreeMap;
 
 // A sample "medium" JSON file content
 const MEDIUM_JSON: &str = r#"
@@ -30,7 +30,7 @@ fn bench_parsing(c: &mut Criterion) {
         })
     });
 
-    // --- NEW: Benchmark your in-memory parser ---
+    // Benchmark the in-memory JsonValue::parse
     group.bench_function("My JsonValue::parse", |b| {
         b.iter(|| {
             let _: JsonValue = JsonValue::parse(black_box(MEDIUM_JSON)).unwrap();
@@ -49,15 +49,11 @@ fn bench_parsing(c: &mut Criterion) {
 
 fn bench_stringifying(c: &mut Criterion) {
     // Create your native JsonValue
-    // --- FIX: Use BTreeMap and JsonNumber ---
     let mut my_val_map = BTreeMap::new();
     my_val_map.insert("key".to_string(), JsonValue::String("value".to_string()));
     my_val_map.insert(
         "items".to_string(),
-        JsonValue::Array(vec![
-            JsonValue::Number(JsonNumber::I64(1)), // Use JsonNumber
-            JsonValue::Null,
-        ]),
+        JsonValue::Array(vec![JsonValue::Number(JsonNumber::I64(1)), JsonValue::Null]),
     );
     let my_value = JsonValue::Object(my_val_map);
 
@@ -70,7 +66,7 @@ fn bench_stringifying(c: &mut Criterion) {
     serde_val_map.insert(
         "items".to_string(),
         serde_json::Value::Array(vec![
-            serde_json::Value::Number(serde_json::Number::from(1)), // Simpler create
+            serde_json::Value::Number(serde_json::Number::from(1)),
             serde_json::Value::Null,
         ]),
     );
@@ -81,7 +77,7 @@ fn bench_stringifying(c: &mut Criterion) {
     // Benchmark your stringify
     group.bench_function("My Stringify", |b| {
         b.iter(|| {
-            let _ = my_value.stringify().unwrap(); // --- FIX: Handle Result ---
+            let _ = my_value.stringify().unwrap();
         })
     });
 

@@ -63,9 +63,6 @@ static BYTE_PROPERTIES: [u8; 256] = {
 };
 
 const IS_WHITESPACE: u8 = 1;
-
-// --- 4. Tokenizer ---
-
 /// The internal tokenizer (lexer).
 ///
 /// It operates on raw bytes (`&[u8]`) for performance, using a lookup
@@ -179,8 +176,8 @@ impl<'a> Tokenizer<'a> {
         let string_start_cursor = self.cursor;
         let mut s: String; // Will hold our final string if it has escapes.
 
-        // --- "Hot" path (MODIFIED to find true end) ---
-        // 1. Scan for the *closing quote*, handling escaped quotes.
+        // --- "Hot" path (find closing quote, handling escapes) ---
+        // 1. Scan for the *closing quote*, correctly handling escaped quotes.
         let mut current_slice = &self.bytes[self.cursor..];
         let mut total_offset = 0; // Offset from self.cursor
 
@@ -214,7 +211,6 @@ impl<'a> Tokenizer<'a> {
                 None => return Err(self.error("Unterminated string".to_string())),
             }
         };
-        // --- End Modification ---
 
         // 2. Get the slice of *just* the string's content.
         let content_slice = &self.bytes[self.cursor..self.cursor + quote_index];
@@ -278,8 +274,7 @@ impl<'a> Tokenizer<'a> {
             }
             // After the loop, we're at the closing quote.
             self.advance_byte(); // Consume the quote
-                                 // MODIFIED: Return Cow::Owned (Fix 5)
-            Ok(TokenType::String(Cow::Owned(s)))
+            Ok(TokenType::String(Cow::Owned(s))) // Return Cow::Owned for the escaped string.
         } else {
             // --- "Hot" path (no escapes) ---
             // This is the fastest path.
@@ -299,13 +294,11 @@ impl<'a> Tokenizer<'a> {
 
             // We're at the closing quote. Consume it.
             self.advance_byte();
-            // MODIFIED: Return Cow::Borrowed (Fix 5)
-            Ok(TokenType::String(Cow::Borrowed(s_str)))
+            Ok(TokenType::String(Cow::Borrowed(s_str))) // Return Cow::Borrowed for the zero-copy unescaped string.
         }
     }
 
-    /// Parses a JSON number.
-    // MODIFIED: Return type and logic (Fix 2)
+    /// Parses a JSON number, handling i64, u64, and f64.
     fn lex_number(&mut self) -> Result<TokenType<'a>, ParseError> {
         let start = self.cursor;
 
@@ -361,7 +354,7 @@ impl<'a> Tokenizer<'a> {
         }
         // --- End validation ---
 
-        // --- MODIFIED: Try parsing as integer first (Fix 2) ---
+        // Try parsing as integer first, then fall back to float.
         if num_str.contains(['.', 'e', 'E']) {
             // It's a float
             match num_str.parse::<f64>() {
@@ -381,7 +374,6 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-// --- NEW Iterator implementation ---
 impl<'a> Iterator for Tokenizer<'a> {
     type Item = Result<Token<'a>, ParseError>;
 
@@ -444,7 +436,6 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
-// --- Unit Tests for Tokenizer ---
 #[cfg(test)]
 mod tests {
     use super::*;

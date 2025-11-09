@@ -7,8 +7,6 @@ use crate::{parse_streaming, ParseError, ParserEvent, StreamingParser};
 use std::collections::BTreeMap;
 use std::fmt;
 
-// --- NEW: JsonNumber (Fix 2) ---
-
 /// A native Rust representation of any valid JSON number.
 ///
 /// This enum is used to store numbers without precision loss,
@@ -34,8 +32,6 @@ impl fmt::Display for JsonNumber {
     }
 }
 
-// --- 5. JSON Value Enum (MODIFIED) ---
-
 /// A native Rust representation of any valid JSON value.
 ///
 /// This enum is used by the `stringify` functions to serialize
@@ -56,7 +52,6 @@ pub enum JsonValue {
     Object(BTreeMap<String, JsonValue>),
 }
 
-// --- NEW: Parse (Fix 3) ---
 impl JsonValue {
     /// Parses a JSON string into a `JsonValue`.
     ///
@@ -199,7 +194,6 @@ impl JsonValue {
     }
 }
 
-// --- 7. Stringify (Serialization - MODIFIED) ---
 impl JsonValue {
     /// Serializes the `JsonValue` into a compact, minified JSON string.
     ///
@@ -216,7 +210,7 @@ impl JsonValue {
         match value {
             JsonValue::Null => w.write_str("null"),
             JsonValue::Boolean(b) => w.write_str(if *b { "true" } else { "false" }),
-            // MODIFIED: Check for NaN/inf (Fix 1) and use JsonNumber (Fix 2)
+            // Check for NaN/inf (which are invalid JSON) and use JsonNumber.
             JsonValue::Number(n) => match n {
                 JsonNumber::F64(f) if f.is_nan() || f.is_infinite() => {
                     Err(fmt::Error) // Hard error
@@ -244,7 +238,6 @@ impl JsonValue {
     }
 
     /// Helper to write a JSON object (compact).
-    // MODIFIED: Use BTreeMap (Fix 4)
     fn write_object<W: fmt::Write>(obj: &BTreeMap<String, JsonValue>, w: &mut W) -> fmt::Result {
         w.write_char('{')?;
         let mut first = true;
@@ -286,8 +279,7 @@ impl JsonValue {
         w.write_char('"')
     }
 
-    // --- Pretty Print Bonus ---
-
+    // --- Pretty-Printing Logic ---
     /// The indentation string to use for pretty-printing (two spaces).
     const INDENT: &'static str = "  ";
 
@@ -312,7 +304,6 @@ impl JsonValue {
             // Primitives
             JsonValue::Null => w.write_str("null"),
             JsonValue::Boolean(b) => w.write_str(if *b { "true" } else { "false" }),
-            // MODIFIED: Check for NaN/inf (Fix 1) and use JsonNumber (Fix 2)
             JsonValue::Number(n) => match n {
                 JsonNumber::F64(f) if f.is_nan() || f.is_infinite() => {
                     Err(fmt::Error) // Hard error
@@ -358,7 +349,6 @@ impl JsonValue {
     }
 
     /// Helper to pretty-print a JSON object.
-    // MODIFIED: Use BTreeMap (Fix 4)
     fn write_object_pretty<W: fmt::Write>(
         obj: &BTreeMap<String, JsonValue>,
         w: &mut W,

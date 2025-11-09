@@ -7,8 +7,6 @@
 use crate::value::JsonNumber;
 use std::borrow::Cow;
 
-// --- 2. Token Structs ---
-
 /// The specific type of a `Token`.
 ///
 /// This represents the smallest meaningful units of JSON grammar.

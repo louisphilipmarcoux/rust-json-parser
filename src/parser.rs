@@ -11,8 +11,6 @@ use crate::value::JsonNumber;
 use std::borrow::Cow;
 use std::iter::Peekable;
 
-// --- 6. "True" Streaming Parser (Stage 15) ---
-
 /// A single event emitted by the `StreamingParser`.
 ///
 /// The parser is an `Iterator` that yields these events, allowing you
@@ -139,7 +137,6 @@ impl<'a> Iterator for StreamingParser<'a> {
                         }
                     }
 
-                    // --- THIS IS THE FIX ---
                     // Return a more specific error message based on the parser's state
                     let msg = match state {
                         ParserState::ExpectObjectCommaOrEnd | 
