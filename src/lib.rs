@@ -25,8 +25,9 @@
 //! efficient way to parse JSON, especially large files.
 //!
 //! ```no_run
-//! use rill_json::{parse_streaming, ParserEvent};
 //! #[allow(clippy::needless_doctest_main)]
+//! use rill_json::{parse_streaming, ParserEvent};
+//!
 //! fn main() {
 //!     let json_data = r#"{ "name": "Babbage", "id": 1815 }"#;
 //!     let mut parser = parse_streaming(json_data).unwrap();
