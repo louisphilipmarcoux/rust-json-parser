@@ -46,11 +46,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.toolchain }}-
 
-      - name: Downgrade lockfile for MSRV check
+      - name: Force regenerate lockfile for MSRV
         if: matrix.toolchain == env.MSRV
         # This tells the old version of Cargo to regenerate a v3 lockfile
         # from Cargo.toml, fixing the "lock file version 4" error.
-        run: cargo update
+        run: rm Cargo.lock && cargo update
 
       - name: Check formatting
         run: cargo fmt --all -- --check
