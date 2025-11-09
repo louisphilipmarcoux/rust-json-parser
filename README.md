@@ -17,7 +17,7 @@ rill-json is designed for performance, correctness and safety. It provides a low
 * **Optimized Performance:** Uses a byte-slice-based tokenizer with a branchless Lookup Table (LUT) and `memchr` (for "safe SIMD") to achieve high performance.
 * **Zero-Allocation String Parsing:** Returns borrowed string slices (`&str`) when no JSON escapes are present, avoiding allocations.
 * **In-Memory DOM:** Provides a `JsonValue` enum for convenience, with a `JsonValue::parse()` function to build an in-memory tree.
-* **Serializer Included:** Comes with `stringify()` and `stringify\_pretty()` to serialize your Rust data. `JsonValue` uses `BTreeMap` for objects to guarantee deterministic key order.
+* **Serializer Included:** Comes with `stringify()` and `stringify_pretty()` to serialize your Rust data. `JsonValue` uses `BTreeMap` for objects to guarantee deterministic key order.
 * **RFC 8259 Compliant:** Built to pass the official JSON specification tests.
 
 ## **Quick Start**
@@ -29,7 +29,7 @@ Add rill-json to your `Cargo.toml`:
 
 ### **1\. Parsing JSON (Streaming)**
 
-The `parse\_streaming` function is the primary entry point. It returns an iterator that you can loop over. This is the most memory-efficient way to parse JSON.
+The `parse_streaming` function is the primary entry point. It returns an iterator that you can loop over. This is the most memory-efficient way to parse JSON.
 
     use rill_json::{parse_streaming, ParserEvent};
 
