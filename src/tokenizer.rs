@@ -179,10 +179,38 @@ impl<'a> Tokenizer<'a> {
 
         // --- "Hot" path ---
         // 1. Scan for the *closing quote*. This is the common case.
-        let slice = &self.bytes[self.cursor..];
-        let quote_index = match memchr(b'"', slice) {
-            Some(i) => i,
-            None => return Err(self.error("Unterminated string".to_string())),
+        let mut current_slice = &self.bytes[self.cursor..];
+        let mut total_offset = 0; // Offset from self.cursor
+
+        let quote_index = loop {
+            match memchr(b'"', current_slice) {
+                Some(i) => {
+                    // We found a quote. Check if it's escaped.
+                    // Count the number of preceding backslashes.
+                    let mut backslashes = 0;
+                    let mut pos = i;
+                    while pos > 0 {
+                        if current_slice.get(pos - 1) == Some(&b'\\') {
+                            backslashes += 1;
+                            pos -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if backslashes % 2 == 0 {
+                        // Even number of backslashes (or zero).
+                        // This is the real closing quote.
+                        break total_offset + i;
+                    } else {
+                        // Odd number of backslashes.
+                        // This quote is escaped. Continue searching *after* it.
+                        total_offset += i + 1;
+                        current_slice = &current_slice[i + 1..];
+                    }
+                }
+                None => return Err(self.error("Unterminated string".to_string())),
+            }
         };
 
         // 2. Get the slice of *just* the string's content.
@@ -391,5 +419,132 @@ impl<'a> Iterator for Tokenizer<'a> {
         });
 
         Some(token_result)
+    }
+}
+
+// --- Unit Tests for Tokenizer ---
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to collect tokens into just their types for easy comparison
+    fn collect_token_types(input: &str) -> Result<Vec<TokenType>, ParseError> {
+        let tokenizer = Tokenizer::new(input);
+        tokenizer.map(|res| res.map(|token| token.kind)).collect()
+    }
+
+    #[test]
+    fn test_tokenizer_structurals() {
+        let input = "{}[]:,";
+        let expected = vec![
+            TokenType::LeftBrace,
+            TokenType::RightBrace,
+            TokenType::LeftBracket,
+            TokenType::RightBracket,
+            TokenType::Colon,
+            TokenType::Comma,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_literals() {
+        let input = "true false null";
+        let expected = vec![
+            TokenType::Boolean(true),
+            TokenType::Boolean(false),
+            TokenType::Null,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_numbers() {
+        let input = "123 -0.5 1e10";
+        let expected = vec![
+            TokenType::Number(123.0),
+            TokenType::Number(-0.5),
+            TokenType::Number(10000000000.0),
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_strings() {
+        let input = r#" "hello" "a\nb" "\u1234" "\"" "#;
+        let expected = vec![
+            TokenType::String("hello".to_string()),
+            TokenType::String("a\nb".to_string()),
+            TokenType::String("\u{1234}".to_string()),
+            TokenType::String("\"".to_string()),
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_all_escapes() {
+        let input = r#""\" \\ \/ \b \f \n \r \t""#;
+        let expected = vec![TokenType::String(
+            "\" \\ / \u{0008} \u{000C} \n \r \t".to_string(),
+        )];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_whitespace_skipping() {
+        let input = "  { \n \t \"key\" \r\n : \n 123 \n } \n ";
+        let expected = vec![
+            TokenType::LeftBrace,
+            TokenType::String("key".to_string()),
+            TokenType::Colon,
+            TokenType::Number(123.0),
+            TokenType::RightBrace,
+        ];
+        assert_eq!(collect_token_types(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_tokenizer_string_errors() {
+        // Unterminated string
+        let input = r#" "hello "#;
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unterminated string");
+
+        // Unescaped control char
+        let input = "\"\n\"";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unescaped control character in string");
+
+        // Invalid escape
+        let input = r#" "\z" "#;
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Invalid escape sequence");
+    }
+
+    #[test]
+    fn test_tokenizer_number_errors() {
+        // Leading zero
+        let input = "0123";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Invalid number: leading zeros not allowed");
+
+        // Trailing decimal
+        let input = "123.";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(
+            err.message,
+            "Invalid number: cannot end with a decimal point"
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_invalid_char() {
+        let input = "?";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unexpected character '?'");
+
+        let input = "[1, 2, &]";
+        let err = collect_token_types(input).unwrap_err();
+        assert_eq!(err.message, "Unexpected character '&'");
     }
 }
