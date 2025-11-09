@@ -21,34 +21,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, nightly, msrv]
-        include:
-          # Add a specific entry for MSRV
-          - os: ubuntu-latest
-            rust: msrv
-            rust_version: 1.65.0
-          # Use stable/nightly as-is for the others
-          - os: ubuntu-latest
-            rust: stable
-            rust_version: stable
-          - os: ubuntu-latest
-            rust: nightly
-            rust_version: nightly
-          - os: macos-latest
-            rust: stable
-            rust_version: stable
-          - os: windows-latest
-            rust: stable
-            rust_version: stable
+        toolchain: [stable, nightly, "1.65.0"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (${{ matrix.rust_version }})
+      - name: Install Rust toolchain (${{ matrix.toolchain }})
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust_version }}
+          toolchain: ${{ matrix.toolchain }}
           components: clippy, rustfmt
 
       - name: Restore Cargo cache
@@ -60,9 +42,15 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+            ${{ runner.os }}-cargo-${{ matrix.toolchain }}-
+
+      - name: Downgrade lockfile for MSRV check
+        if: matrix.toolchain == env.MSRV
+        # This tells the old version of Cargo to regenerate a v3 lockfile
+        # from Cargo.toml, fixing the "lock file version 4" error.
+        run: cargo update
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -76,9 +64,9 @@ jobs:
 
       # Only run bench and dry-run on one specific job to avoid duplication
       - name: Run benchmarks
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo bench
 
       - name: Check if package is publishable
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
         run: cargo publish --dry-run
