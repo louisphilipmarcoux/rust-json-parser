@@ -13,6 +13,8 @@
 //! * **Optimized Performance:** Uses a byte-slice-based tokenizer with a
 //!   branchless Lookup Table (LUT) and `memchr` for high-performance,
 //!   safe-SIMD-accelerated string parsing.
+//! * **Zero-Allocation String Parsing:** Returns borrowed string slices (`&str`)
+//!   when no JSON escapes are present, avoiding allocations.
 //! * **Serializer Included:** Comes with `stringify()` and `stringify_pretty()`
 //!   to serialize your Rust data back to JSON.
 //! * **RFC 8259 Compliant:** Passes a full test suite for specification compliance.
@@ -22,7 +24,7 @@
 //! The `parse_streaming` function is the primary entry point. It's the most
 //! efficient way to parse JSON, especially large files.
 //!
-//! no_run
+//! ```no_run
 //! use rill_json::{parse_streaming, ParserEvent};
 //!
 //! fn main() {
@@ -43,22 +45,40 @@
 //! }
 //! ```
 //!
+//! ## Quick Start: Parsing (In-Memory)
+//!
+//! For convenience, you can also parse directly to an in-memory `JsonValue`.
+//!
+//! ```no_run
+//! use rill_json::{JsonValue, JsonNumber};
+//! use std::collections::BTreeMap;
+//!
+//! let json_data = r#"{ "id": 1815 }"#;
+//! let parsed = JsonValue::parse(json_data).unwrap();
+//!
+//! let mut expected_map = BTreeMap::new();
+//! expected_map.insert("id".to_string(), JsonValue::Number(JsonNumber::I64(1815)));
+//! let expected_val = JsonValue::Object(expected_map);
+//!
+//! assert_eq!(parsed, expected_val);
+//! ```
+//!
 //! // ## Quick Start: Serializing
 //!
 //! // You can also create JSON strings from your own Rust data using the `JsonValue` enum.
 //!
 //! ```no_run
-//! use rill_json::JsonValue;
-//! use std::collections::HashMap;
+//! use rill_json::{JsonValue, JsonNumber};
+//! use std::collections::BTreeMap;
 //!
-//! let mut user = HashMap::new();
+//! let mut user = BTreeMap::new();
 //! user.insert("username".to_string(), JsonValue::String("ada_l".to_string()));
-//! user.insert("id".to_string(), JsonValue::Number(1815.0));
+//! user.insert("id".to_string(), JsonValue::Number(JsonNumber::I64(1815)));
 //!
 //! let json_object = JsonValue::Object(user);
 //!
 //! // Get the compact string
-//! let json_string = json_object.stringify();
+//! let json_string = json_object.stringify().unwrap();
 //! assert_eq!(json_string, r#"{"id":1815,"username":"ada_l"}"#);
 //! ```
 
@@ -80,7 +100,7 @@ mod tokenizer;
 // This creates the clean, top-level API for users.
 pub use error::ParseError;
 pub use parser::{ParserEvent, StreamingParser};
-pub use value::JsonValue;
+pub use value::{JsonNumber, JsonValue}; // <-- Added JsonNumber
 
 // --- Constants ---
 /// The default maximum nesting depth (e.g., `[[[]]]`) to prevent stack overflows.
@@ -104,18 +124,18 @@ const MAX_JSON_SIZE_BYTES: usize = 10 * 1024 * 1024;
 ///
 /// # Examples
 /// ```
-/// use rill_json::{parse_streaming, ParserEvent};
+/// use rill_json::{parse_streaming, ParserEvent, JsonNumber};
 ///
 /// let json_data = r#"[1, "hello"]"#;
 /// let mut parser = parse_streaming(json_data).unwrap();
 ///
 /// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::StartArray);
-/// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::Number(1.0));
-/// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::String("hello".to_string()));
+/// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::Number(JsonNumber::I64(1)));
+/// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::String("hello".into()));
 /// assert_eq!(parser.next().unwrap().unwrap(), ParserEvent::EndArray);
 /// assert!(parser.next().is_none());
 /// ```
-pub fn parse_streaming(input: &'_ str) -> Result<StreamingParser<'_>, ParseError> {
+pub fn parse_streaming<'a>(input: &'a str) -> Result<StreamingParser<'a>, ParseError> {
     if input.len() > MAX_JSON_SIZE_BYTES {
         return Err(ParseError {
             message: "Input exceeds maximum size limit".to_string(),
@@ -131,18 +151,20 @@ pub fn parse_streaming(input: &'_ str) -> Result<StreamingParser<'_>, ParseError
 // The tests all stay in lib.rs, but we update the `use` statements.
 #[cfg(test)]
 mod tests {
-    use super::{parse_streaming, JsonValue, ParseError, ParserEvent, StreamingParser};
+    use std::collections::BTreeMap;
+    // Use the public API we just defined
+    use super::{parse_streaming, JsonNumber, JsonValue, ParseError, ParserEvent, StreamingParser};
     use serde_json::{self, Value as SerdeValue};
-    use std::collections::HashMap;
+    use std::borrow::Cow;
 
-    fn collect_events(input: &str) -> Result<Vec<ParserEvent>, ParseError> {
+    fn collect_events<'a>(input: &'a str) -> Result<Vec<ParserEvent<'a>>, ParseError> {
         parse_streaming(input)?.collect()
     }
 
-    fn collect_events_with_depth(
-        input: &str,
+    fn collect_events_with_depth<'a>(
+        input: &'a str,
         depth: usize,
-    ) -> Result<Vec<ParserEvent>, ParseError> {
+    ) -> Result<Vec<ParserEvent<'a>>, ParseError> {
         // We can call this because `StreamingParser` and its `new` are public
         StreamingParser::new(input, depth).collect()
     }
@@ -156,14 +178,28 @@ mod tests {
             events,
             vec![
                 ParserEvent::StartObject,
-                ParserEvent::Key("key".to_string()),
+                ParserEvent::Key(Cow::Borrowed("key")),
                 ParserEvent::StartArray,
-                ParserEvent::Number(1.0),
+                ParserEvent::Number(JsonNumber::I64(1)),
                 ParserEvent::Null,
                 ParserEvent::Boolean(true),
-                ParserEvent::String("hello".to_string()),
+                ParserEvent::String(Cow::Borrowed("hello")),
                 ParserEvent::EndArray,
                 ParserEvent::EndObject
+            ]
+        );
+    }
+
+    #[test]
+    fn test_streaming_parser_escaped_string() {
+        let input = r#"["a\n\"b"]"#;
+        let events = collect_events(input).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                ParserEvent::StartArray,
+                ParserEvent::String(Cow::Owned("a\n\"b".to_string())),
+                ParserEvent::EndArray
             ]
         );
     }
@@ -188,11 +224,23 @@ mod tests {
     fn test_streaming_parser_top_level_values() {
         assert_eq!(
             collect_events(r#""hello""#).unwrap(),
-            vec![ParserEvent::String("hello".to_string())]
+            vec![ParserEvent::String("hello".into())]
         );
         assert_eq!(
             collect_events("123.5").unwrap(),
-            vec![ParserEvent::Number(123.5)]
+            vec![ParserEvent::Number(JsonNumber::F64(123.5))]
+        );
+        assert_eq!(
+            collect_events("9007199254740993").unwrap(),
+            vec![ParserEvent::Number(JsonNumber::I64(9007199254740993))]
+        );
+        assert_eq!(
+            collect_events("9223372036854775808").unwrap(),
+            vec![ParserEvent::Number(JsonNumber::U64(9223372036854775808))]
+        );
+        assert_eq!(
+            collect_events("-1234567890").unwrap(),
+            vec![ParserEvent::Number(JsonNumber::I64(-1234567890))]
         );
         assert_eq!(
             collect_events("true").unwrap(),
@@ -210,13 +258,13 @@ mod tests {
             vec![
                 ParserEvent::StartArray,
                 ParserEvent::StartObject,
-                ParserEvent::Key("a".to_string()),
-                ParserEvent::Number(1.0),
-                ParserEvent::Key("b".to_string()),
+                ParserEvent::Key("a".into()),
+                ParserEvent::Number(JsonNumber::I64(1)),
+                ParserEvent::Key("b".into()),
                 ParserEvent::StartArray,
                 ParserEvent::Null,
                 ParserEvent::StartObject,
-                ParserEvent::Key("c".to_string()),
+                ParserEvent::Key("c".into()),
                 ParserEvent::StartObject,
                 ParserEvent::EndObject,
                 ParserEvent::EndObject,
@@ -320,21 +368,19 @@ mod tests {
     // --- Stage 16 Tests ---
 
     #[test]
-    fn test_stringify_basic() {
+    fn test_stringify_stage_16_examples() {
         // Input: A native map {"key": "value", "items": [1, None]}
-        // Output: The string {"key":"value","items":[1,null]}
-        let mut items = HashMap::new();
+        // Output: The string {"items":[1,null],"key":"value"}
+        let mut items = BTreeMap::new();
         items.insert("key".to_string(), JsonValue::String("value".to_string()));
         items.insert(
             "items".to_string(),
-            JsonValue::Array(vec![JsonValue::Number(1.0), JsonValue::Null]),
+            JsonValue::Array(vec![JsonValue::Number(JsonNumber::I64(1)), JsonValue::Null]),
         );
         let obj = JsonValue::Object(items);
 
-        // --- Robust Test ---
         // Parse the string output back into a serde_json::Value
-        // This is robust to key order changes.
-        let output_str = obj.stringify();
+        let output_str = obj.stringify().unwrap();
         let parsed_value: SerdeValue =
             serde_json::from_str(&output_str).expect("Stringify output should be valid JSON");
 
@@ -345,60 +391,87 @@ mod tests {
         });
 
         assert_eq!(parsed_value, expected_value);
+        // BTreeMap guarantees key order, so we can also test the string directly
+        assert_eq!(output_str, r#"{"items":[1,null],"key":"value"}"#);
 
+        // Test case from challenge:
         // Input: A native string a "quoted" \ string
         // Output: The string "a \"quoted\" \\ string"
         let s = JsonValue::String("a \"quoted\" \\ string".to_string());
-        assert_eq!(s.stringify(), r#""a \"quoted\" \\ string""#);
+        assert_eq!(s.stringify().unwrap(), r#""a \"quoted\" \\ string""#);
     }
 
     #[test]
     fn test_stringify_all_types() {
         // Primitives
-        assert_eq!(JsonValue::Null.stringify(), "null");
-        assert_eq!(JsonValue::Boolean(true).stringify(), "true");
-        assert_eq!(JsonValue::Boolean(false).stringify(), "false");
-        assert_eq!(JsonValue::Number(123.45).stringify(), "123.45");
-        assert_eq!(JsonValue::Number(-0.5).stringify(), "-0.5");
-        assert_eq!(JsonValue::Number(1e+3).stringify(), "1000");
+        assert_eq!(JsonValue::Null.stringify().unwrap(), "null");
+        assert_eq!(JsonValue::Boolean(true).stringify().unwrap(), "true");
+        assert_eq!(JsonValue::Boolean(false).stringify().unwrap(), "false");
+        assert_eq!(
+            JsonValue::Number(JsonNumber::F64(123.45))
+                .stringify()
+                .unwrap(),
+            "123.45"
+        );
+        assert_eq!(
+            JsonValue::Number(JsonNumber::F64(-0.5))
+                .stringify()
+                .unwrap(),
+            "-0.5"
+        );
+        assert_eq!(
+            JsonValue::Number(JsonNumber::I64(1000))
+                .stringify()
+                .unwrap(),
+            "1000"
+        );
+        assert_eq!(
+            JsonValue::Number(JsonNumber::U64(123456789012345))
+                .stringify()
+                .unwrap(),
+            "123456789012345"
+        );
 
         // Empty Structures
-        assert_eq!(JsonValue::Array(vec![]).stringify(), "[]");
-        assert_eq!(JsonValue::Object(HashMap::new()).stringify(), "{}");
+        assert_eq!(JsonValue::Array(vec![]).stringify().unwrap(), "[]");
+        assert_eq!(
+            JsonValue::Object(BTreeMap::new()).stringify().unwrap(),
+            "{}"
+        );
 
         // Complex Array
         let arr = JsonValue::Array(vec![
-            JsonValue::Number(1.0),
+            JsonValue::Number(JsonNumber::I64(1)),
             JsonValue::String("test".to_string()),
             JsonValue::Boolean(true),
             JsonValue::Null,
-            JsonValue::Object(HashMap::new()),
+            JsonValue::Object(BTreeMap::new()),
         ]);
-        assert_eq!(arr.stringify(), r#"[1,"test",true,null,{}]"#);
+        assert_eq!(arr.stringify().unwrap(), r#"[1,"test",true,null,{}]"#);
     }
 
     #[test]
     fn test_stringify_string_escapes() {
         // Test all escapes from Stage 8
         let s = JsonValue::String("\" \\ / \u{0008} \u{000C} \n \r \t".to_string());
-        assert_eq!(s.stringify(), r#""\" \\ \/ \b \f \n \r \t""#);
+        assert_eq!(s.stringify().unwrap(), r#""\" \\ \/ \b \f \n \r \t""#);
 
         // Test control character escape
         let s_control = JsonValue::String("hello\u{0001}world".to_string());
-        assert_eq!(s_control.stringify(), r#""hello\u0001world""#);
+        assert_eq!(s_control.stringify().unwrap(), r#""hello\u0001world""#);
     }
 
     #[test]
     fn test_stringify_pretty_print() {
-        let mut sub_obj = HashMap::new();
-        sub_obj.insert("sub_key".to_string(), JsonValue::Number(2.0));
+        let mut sub_obj = BTreeMap::new();
+        sub_obj.insert("sub_key".to_string(), JsonValue::Number(JsonNumber::I64(2)));
 
-        let mut items = HashMap::new();
+        let mut items = BTreeMap::new();
         items.insert("key".to_string(), JsonValue::String("value".to_string()));
         items.insert(
             "items".to_string(),
             JsonValue::Array(vec![
-                JsonValue::Number(1.0),
+                JsonValue::Number(JsonNumber::I64(1)),
                 JsonValue::Null,
                 JsonValue::Object(sub_obj),
             ]),
@@ -406,7 +479,7 @@ mod tests {
         items.insert("admin".to_string(), JsonValue::Boolean(true));
         let obj = JsonValue::Object(items);
 
-        let pretty_string = obj.stringify_pretty();
+        let pretty_string = obj.stringify_pretty().unwrap();
 
         // Parse the output string with serde_json
         let parsed_value: SerdeValue =
@@ -426,24 +499,129 @@ mod tests {
         });
 
         // Assert that the *parsed value* matches the expected value.
-        // This test will ALWAYS pass regardless of HashMap ordering.
         assert_eq!(parsed_value, expected_value);
+
+        // With BTreeMap, we can also test the exact string output
+        let expected_string = r#"{
+  "admin": true,
+  "items": [
+    1,
+    null,
+    {
+      "sub_key": 2
+    }
+  ],
+  "key": "value"
+}"#;
+        assert_eq!(pretty_string, expected_string);
     }
 
     #[test]
     fn test_stringify_pretty_empty() {
-        // Test empty object and array pretty printing
-        let empty_obj = JsonValue::Object(HashMap::new());
-        assert_eq!(empty_obj.stringify_pretty(), "{}");
+        // Test empty object and array
+        assert_eq!(
+            JsonValue::Object(BTreeMap::new())
+                .stringify_pretty()
+                .unwrap(),
+            "{}"
+        );
+        assert_eq!(JsonValue::Array(vec![]).stringify_pretty().unwrap(), "[]");
+    }
 
-        let empty_arr = JsonValue::Array(vec![]);
-        assert_eq!(empty_arr.stringify_pretty(), "[]");
+    // --- NEW: Tests for Fix 1 (NaN/inf) ---
+    #[test]
+    fn test_stringify_nan_inf() {
+        let val_nan = JsonValue::Number(JsonNumber::F64(f64::NAN));
+        let val_inf = JsonValue::Number(JsonNumber::F64(f64::INFINITY));
+        let val_neg_inf = JsonValue::Number(JsonNumber::F64(f64::NEG_INFINITY));
 
-        // Also check that they are valid JSON
-        let parsed_obj: SerdeValue = serde_json::from_str(&empty_obj.stringify_pretty()).unwrap();
-        assert!(parsed_obj.is_object());
+        // We defined this as a hard error
+        assert!(val_nan.stringify().is_err());
+        assert!(val_inf.stringify().is_err());
+        assert!(val_neg_inf.stringify().is_err());
 
-        let parsed_arr: SerdeValue = serde_json::from_str(&empty_arr.stringify_pretty()).unwrap();
-        assert!(parsed_arr.is_array());
+        // Test pretty print
+        assert!(val_nan.stringify_pretty().is_err());
+        assert!(val_inf.stringify_pretty().is_err());
+    }
+
+    // --- NEW: Tests for Fix 3 (JsonValue::parse) ---
+    #[test]
+    fn test_value_parse_simple() {
+        let input = r#"{ "key": [1, null, true, "hello"] }"#;
+        let value = JsonValue::parse(input).unwrap();
+
+        let mut obj = BTreeMap::new();
+        obj.insert(
+            "key".to_string(),
+            JsonValue::Array(vec![
+                JsonValue::Number(JsonNumber::I64(1)),
+                JsonValue::Null,
+                JsonValue::Boolean(true),
+                JsonValue::String("hello".to_string()),
+            ]),
+        );
+        let expected = JsonValue::Object(obj);
+
+        assert_eq!(value, expected);
+    }
+
+    #[test]
+    fn test_value_parse_primitives() {
+        assert_eq!(JsonValue::parse("null").unwrap(), JsonValue::Null);
+        assert_eq!(
+            JsonValue::parse("123").unwrap(),
+            JsonValue::Number(JsonNumber::I64(123))
+        );
+        assert_eq!(
+            JsonValue::parse("-456").unwrap(),
+            JsonValue::Number(JsonNumber::I64(-456))
+        );
+        assert_eq!(
+            JsonValue::parse("123.5").unwrap(),
+            JsonValue::Number(JsonNumber::F64(123.5))
+        );
+        assert_eq!(
+            JsonValue::parse("1e5").unwrap(),
+            JsonValue::Number(JsonNumber::F64(100000.0))
+        );
+        assert_eq!(
+            JsonValue::parse("9007199254740993").unwrap(),
+            JsonValue::Number(JsonNumber::I64(9007199254740993))
+        );
+        assert_eq!(
+            JsonValue::parse("9223372036854775808").unwrap(),
+            JsonValue::Number(JsonNumber::U64(9223372036854775808))
+        );
+        assert_eq!(
+            JsonValue::parse(r#""hi""#).unwrap(),
+            JsonValue::String("hi".to_string())
+        );
+        assert_eq!(
+            JsonValue::parse(r#""esc\n""#).unwrap(),
+            JsonValue::String("esc\n".to_string())
+        );
+    }
+
+    #[test]
+    fn test_value_parse_errors() {
+        assert_eq!(JsonValue::parse("").unwrap_err().message, "Empty input");
+        assert_eq!(
+            JsonValue::parse("{").unwrap_err().message,
+            "Unclosed object"
+        );
+        assert_eq!(
+            JsonValue::parse("[1, 2").unwrap_err().message,
+            "Unclosed array"
+        );
+        assert!(JsonValue::parse("[1, 2]").is_ok());
+        assert_eq!(
+            JsonValue::parse("[1, 2] extra").unwrap_err().message,
+            "Unexpected character 'e'"
+        );
+        assert_eq!(
+            JsonValue::parse(r#"{ "key": 1, }"#).unwrap_err().message,
+            "Unexpected '}', expected a string key"
+        );
     }
 }

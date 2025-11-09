@@ -7,6 +7,8 @@
 use crate::error::ParseError;
 use crate::token::{Token, TokenType};
 use crate::tokenizer::Tokenizer;
+use crate::value::JsonNumber;
+use std::borrow::Cow;
 use std::iter::Peekable;
 
 // --- 6. "True" Streaming Parser (Stage 15) ---
@@ -17,7 +19,7 @@ use std::iter::Peekable;
 /// to react to JSON data as it's being parsed without loading the
 /// entire structure into memory.
 #[derive(Debug, PartialEq, Clone)]
-pub enum ParserEvent {
+pub enum ParserEvent<'a> {
     /// The start of a JSON object (`{`).
     StartObject,
     /// The end of a JSON object (`}`).
@@ -27,11 +29,11 @@ pub enum ParserEvent {
     /// The end of a JSON array (`]`).
     EndArray,
     /// A JSON object key (e.g., `"name": ...`).
-    Key(String),
+    Key(Cow<'a, str>),
     /// A JSON string value (e.g., `... : "value"`).
-    String(String),
+    String(Cow<'a, str>),
     /// A JSON number value (e.g., `123`, `-0.5`, `1e10`).
-    Number(f64),
+    Number(JsonNumber),
     /// A JSON boolean value (`true` or `false`).
     Boolean(bool),
     /// A JSON `null` value.
@@ -86,7 +88,7 @@ impl<'a> StreamingParser<'a> {
     }
 
     /// A helper function to create a `ParseError` from a token's location.
-    fn error_from_token(&self, message: String, token: &Token) -> ParseError {
+    fn error_from_token(&self, message: String, token: &Token<'a>) -> ParseError {
         ParseError {
             message,
             line: token.line,
@@ -98,7 +100,7 @@ impl<'a> StreamingParser<'a> {
 /// The main implementation of the parser's `Iterator` trait.
 /// This is where the state machine logic lives.
 impl<'a> Iterator for StreamingParser<'a> {
-    type Item = Result<ParserEvent, ParseError>;
+    type Item = Result<ParserEvent<'a>, ParseError>;
 
     /// Consumes the next token and advances the parser's state.
     fn next(&mut self) -> Option<Self::Item> {
@@ -122,10 +124,37 @@ impl<'a> Iterator for StreamingParser<'a> {
                 // End of input, but we're still in a nested state.
                 (None, Some(state)) => {
                     if *state == ParserState::ExpectValue && self.state_stack.len() == 1 {
-                        return None; // We expected a value, but got clean EOF. Valid.
+                        // We expected a value, but got clean EOF. Valid for empty input.
+                        // The tokenizer.next() would have returned None, so we'd be in (None, None).
+                        // This path is for cases like `[1,` and then EOF.
+                        // A clean EOF on ExpectValue (e.g. empty string) is handled by (None, None)
                     }
+                    // Handle clean EOF on empty input
+                    if *state == ParserState::ExpectValue && self.state_stack.len() == 1 {
+                        if let Some(_tok) = &current_token {
+                            // This case should not be hit if current_token is None
+                        } else {
+                            // This means tokenizer.next() returned None *and* state is ExpectValue
+                            return None;
+                        }
+                    }
+
+                    // --- THIS IS THE FIX ---
+                    // Return a more specific error message based on the parser's state
+                    let msg = match state {
+                        ParserState::ExpectObjectCommaOrEnd | 
+                        ParserState::ExpectObjectFirstKeyOrEnd |
+                        ParserState::ExpectObjectKey |
+                        ParserState::ExpectObjectColon |
+                        ParserState::ExpectObjectValue => "Unclosed object",
+                        ParserState::ExpectArrayCommaOrEnd |
+                        ParserState::ExpectArrayFirstValueOrEnd |
+                        ParserState::ExpectArrayValue => "Unclosed array",
+                        _ => "Unexpected end of input, unclosed structure"
+                    };
+
                     return Some(Err(ParseError {
-                        message: "Unexpected end of input, unclosed structure".to_string(),
+                        message: msg.to_string(),
                         line: 0, // We don't have a token for location info
                         column: 0,
                     }));

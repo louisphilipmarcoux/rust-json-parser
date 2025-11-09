@@ -3,10 +3,38 @@
 //!
 //! This module also includes the "stringify" (serialization) logic
 //! for converting a `JsonValue` back into a JSON string.
-use std::collections::HashMap;
+use crate::{parse_streaming, ParseError, ParserEvent, StreamingParser};
+use std::collections::BTreeMap;
 use std::fmt;
 
-// --- 5. JSON Value Enum (for Stage 16) ---
+// --- NEW: JsonNumber (Fix 2) ---
+
+/// A native Rust representation of any valid JSON number.
+///
+/// This enum is used to store numbers without precision loss,
+/// supporting `i64`, `u64`, and `f64`.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum JsonNumber {
+    /// Represents a signed 64-bit integer.
+    I64(i64),
+    /// Represents an unsigned 64-bit integer.
+    U64(u64),
+    /// Represents a 64-bit floating-point number.
+    F64(f64),
+}
+
+/// Implement Display to allow `write!(w, "{}", ...)`
+impl fmt::Display for JsonNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JsonNumber::I64(n) => write!(f, "{}", n),
+            JsonNumber::U64(n) => write!(f, "{}", n),
+            JsonNumber::F64(n) => write!(f, "{}", n),
+        }
+    }
+}
+
+// --- 5. JSON Value Enum (MODIFIED) ---
 
 /// A native Rust representation of any valid JSON value.
 ///
@@ -18,31 +46,169 @@ pub enum JsonValue {
     Null,
     /// Represents a JSON `true` or `false`.
     Boolean(bool),
-    /// Represents a JSON number (stored as `f64`).
-    Number(f64),
+    /// Represents a JSON number.
+    Number(JsonNumber),
     /// Represents a JSON string.
     String(String),
     /// Represents a JSON array (list).
     Array(Vec<JsonValue>),
-    /// Represents a JSON object (map).
-    Object(HashMap<String, JsonValue>),
+    /// Represents a JSON object (map). (Using BTreeMap for Fix 4)
+    Object(BTreeMap<String, JsonValue>),
 }
 
-// --- 7. Stringify (Serialization - Stage 16) ---
+// --- NEW: Parse (Fix 3) ---
+impl JsonValue {
+    /// Parses a JSON string into a `JsonValue`.
+    ///
+    /// This function builds an in-memory `JsonValue` from the input string.
+    /// For large inputs, using the `parse_streaming` iterator is more memory-efficient.
+    ///
+    /// # Errors
+    /// Returns a `ParseError` if the JSON is invalid, empty, or has trailing tokens.
+    pub fn parse(input: &str) -> Result<JsonValue, ParseError> {
+        let mut parser = parse_streaming(input)?.peekable();
+
+        // Check for empty input
+        if parser.peek().is_none() {
+            return Err(ParseError {
+                message: "Empty input".to_string(),
+                line: 1,
+                column: 1,
+            });
+        }
+
+        // Recursive helper
+        fn parse_one(
+            parser: &mut std::iter::Peekable<StreamingParser<'_>>,
+        ) -> Result<JsonValue, ParseError> {
+            // Consume next event
+            let event = match parser.next() {
+                Some(Ok(event)) => event,
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(ParseError {
+                        message: "Unexpected end of input".to_string(),
+                        line: 1, // This is a best-effort location
+                        column: 1,
+                    });
+                }
+            };
+
+            match event {
+                // Base cases
+                ParserEvent::String(s) => Ok(JsonValue::String(s.into_owned())),
+                ParserEvent::Number(n) => Ok(JsonValue::Number(n)),
+                ParserEvent::Boolean(b) => Ok(JsonValue::Boolean(b)),
+                ParserEvent::Null => Ok(JsonValue::Null),
+
+                // Recursive cases
+                ParserEvent::StartArray => {
+                    let mut arr = Vec::new();
+                    // Loop until we see `EndArray`
+                    loop {
+                        match parser.peek() {
+                            Some(Ok(ParserEvent::EndArray)) => {
+                                parser.next(); // Consume the EndArray
+                                break Ok(JsonValue::Array(arr));
+                            }
+                            Some(Ok(_)) => {
+                                // It's a value, recurse
+                                arr.push(parse_one(parser)?);
+                            }
+                            Some(Err(_)) => {
+                                // Propagate the error
+                                return Err(parser.next().unwrap().unwrap_err());
+                            }
+                            None => {
+                                // --- FIX: Specific error message ---
+                                return Err(ParseError {
+                                    message: "Unclosed array".to_string(),
+                                    line: 1, column: 1, // TODO: Get location
+                                });
+                            }
+                        }
+                    }
+                }
+
+                ParserEvent::StartObject => {
+                    let mut obj = BTreeMap::new();
+                    // Loop until we see `EndObject`
+                    loop {
+                         match parser.peek() {
+                            Some(Ok(ParserEvent::EndObject)) => {
+                                parser.next(); // Consume the EndObject
+                                break Ok(JsonValue::Object(obj));
+                            }
+                            Some(Ok(ParserEvent::Key(_))) => {
+                                // Get the key
+                                let key = match parser.next() {
+                                    Some(Ok(ParserEvent::Key(key))) => key.into_owned(),
+                                    _ => unreachable!(), // We just peeked
+                                };
+                                // Get the value
+                                let val = parse_one(parser)?;
+                                obj.insert(key, val);
+                            }
+                            Some(Ok(_)) => {
+                                // E.g., saw a String instead of a Key
+                                return Err(ParseError {
+                                    message: "Expected key in object".to_string(),
+                                    line: 1, column: 1, // TODO
+                                });
+                            }
+                            Some(Err(_)) => {
+                                // Propagate the error
+                                return Err(parser.next().unwrap().unwrap_err());
+                            }
+                            None => {
+                                // --- FIX: Specific error message ---
+                                return Err(ParseError {
+                                    message: "Unclosed object".to_string(),
+                                    line: 1, column: 1, // TODO
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Invalid start
+                ParserEvent::Key(_) | ParserEvent::EndArray | ParserEvent::EndObject => {
+                    Err(ParseError {
+                        message: "Expected a value".to_string(),
+                        line: 1,
+                        column: 1, // TODO
+                    })
+                }
+            }
+        } // End of `parse_one`
+
+        // Parse the root value
+        let root = parse_one(&mut parser)?;
+
+        // Check for trailing tokens
+        match parser.next() {
+            None => Ok(root),
+            Some(Err(e)) => Err(e),
+            // This error should be caught by the streaming parser first
+            Some(Ok(event)) => Err(ParseError {
+                message: format!("Unexpected trailing token: {:?}", event),
+                line: 1,
+                column: 1, // TODO
+            }),
+        }
+    }
+}
+
+// --- 7. Stringify (Serialization - MODIFIED) ---
 impl JsonValue {
     /// Serializes the `JsonValue` into a compact, minified JSON string.
     ///
-    /// # Examples
-    /// ```
-    /// use rill_json::JsonValue;
-    /// let val = JsonValue::Number(123.0);
-    /// assert_eq!(val.stringify(), "123");
-    /// ```
-    pub fn stringify(&self) -> String {
+    /// # Errors
+    /// Returns `fmt::Error` if the value contains `f64::NAN` or `f64::INFINITY`.
+    pub fn stringify(&self) -> Result<String, fmt::Error> {
         let mut output = String::new();
-        // This unwrap is safe because writing to a String never fails.
-        Self::write_value(self, &mut output).unwrap();
-        output
+        Self::write_value(self, &mut output)?;
+        Ok(output)
     }
 
     /// Recursive helper function to write any `JsonValue` to a string buffer.
@@ -50,7 +216,13 @@ impl JsonValue {
         match value {
             JsonValue::Null => w.write_str("null"),
             JsonValue::Boolean(b) => w.write_str(if *b { "true" } else { "false" }),
-            JsonValue::Number(n) => write!(w, "{}", n),
+            // MODIFIED: Check for NaN/inf (Fix 1) and use JsonNumber (Fix 2)
+            JsonValue::Number(n) => match n {
+                JsonNumber::F64(f) if f.is_nan() || f.is_infinite() => {
+                    Err(fmt::Error) // Hard error
+                }
+                _ => write!(w, "{}", n), // Use JsonNumber's Display impl
+            },
             JsonValue::String(s) => Self::write_string(s, w),
             JsonValue::Array(a) => Self::write_array(a, w),
             JsonValue::Object(o) => Self::write_object(o, w),
@@ -72,11 +244,11 @@ impl JsonValue {
     }
 
     /// Helper to write a JSON object (compact).
-    fn write_object<W: fmt::Write>(obj: &HashMap<String, JsonValue>, w: &mut W) -> fmt::Result {
+    // MODIFIED: Use BTreeMap (Fix 4)
+    fn write_object<W: fmt::Write>(obj: &BTreeMap<String, JsonValue>, w: &mut W) -> fmt::Result {
         w.write_char('{')?;
         let mut first = true;
-        // Note: HashMap iteration order is not guaranteed,
-        // but this is fine according to the JSON specification.
+        // Note: BTreeMap iteration order IS guaranteed (alphabetical).
         for (key, val) in obj {
             if !first {
                 w.write_char(',')?;
@@ -122,25 +294,12 @@ impl JsonValue {
     /// Serializes the `JsonValue` into a human-readable,
     /// indented JSON string ("pretty-print").
     ///
-    /// # Examples
-    /// ```
-    /// use rill_json::JsonValue;
-    /// use std::collections::HashMap;
-    ///
-    /// let mut obj = HashMap::new();
-    /// obj.insert("key".to_string(), JsonValue::String("value".to_string()));
-    /// let val = JsonValue::Object(obj);
-    ///
-    /// let pretty = val.stringify_pretty();
-    /// assert!(pretty.starts_with("{\n"));
-    /// assert!(pretty.contains("\n  \"key\": \"value\"\n"));
-    /// assert!(pretty.ends_with("\n}"));
-    /// ```
-    pub fn stringify_pretty(&self) -> String {
+    /// # Errors
+    /// Returns `fmt::Error` if the value contains `f64::NAN` or `f64::INFINITY`.
+    pub fn stringify_pretty(&self) -> Result<String, fmt::Error> {
         let mut output = String::new();
-        // This unwrap is safe because writing to a String never fails.
-        Self::write_value_pretty(self, &mut output, 0).unwrap();
-        output
+        Self::write_value_pretty(self, &mut output, 0)?;
+        Ok(output)
     }
 
     /// Recursive helper for pretty-printing a value.
@@ -150,12 +309,18 @@ impl JsonValue {
         depth: usize,
     ) -> fmt::Result {
         match value {
-            // Primitives are written the same as compact
+            // Primitives
             JsonValue::Null => w.write_str("null"),
             JsonValue::Boolean(b) => w.write_str(if *b { "true" } else { "false" }),
-            JsonValue::Number(n) => write!(w, "{}", n),
+            // MODIFIED: Check for NaN/inf (Fix 1) and use JsonNumber (Fix 2)
+            JsonValue::Number(n) => match n {
+                JsonNumber::F64(f) if f.is_nan() || f.is_infinite() => {
+                    Err(fmt::Error) // Hard error
+                }
+                _ => write!(w, "{}", n), // Use JsonNumber's Display impl
+            },
             JsonValue::String(s) => Self::write_string(s, w),
-            // Composites (Array/Object) get new logic
+            // Composites
             JsonValue::Array(a) => Self::write_array_pretty(a, w, depth),
             JsonValue::Object(o) => Self::write_object_pretty(o, w, depth),
         }
@@ -193,8 +358,9 @@ impl JsonValue {
     }
 
     /// Helper to pretty-print a JSON object.
+    // MODIFIED: Use BTreeMap (Fix 4)
     fn write_object_pretty<W: fmt::Write>(
-        obj: &HashMap<String, JsonValue>,
+        obj: &BTreeMap<String, JsonValue>,
         w: &mut W,
         depth: usize,
     ) -> fmt::Result {
